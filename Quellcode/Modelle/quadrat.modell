@@ -1,0 +1,13 @@
+# Quadrat
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Quadrat
+beschreibung: Scharfkantiger Vierkant: die Ablösung sitzt fest an den Vorderkanten.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Kantenlänge
+groesse: 10
+winkel: 0
+reynolds: 100
+
+teil: Quadrat
+rechteck: -0.5 -0.5 0.5 0.5

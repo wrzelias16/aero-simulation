@@ -1,0 +1,14 @@
+# NACA 64A010 (symmetrisch, laminar)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NACA 64A010 (symmetrisch, laminar)
+beschreibung: Dünnes symmetrisches Laminarprofil für Leitwerke schneller Flugzeuge.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei naca64a010.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: naca64a010

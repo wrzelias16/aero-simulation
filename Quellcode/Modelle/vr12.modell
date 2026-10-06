@@ -1,0 +1,14 @@
+# Boeing-Vertol VR-12 (Hubschrauber)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Boeing-Vertol VR-12 (Hubschrauber)
+beschreibung: Rotorblatt-Profil von Boeing-Vertol mit kleiner Abrisskante an der Hinterkante.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei vr12.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: vr12

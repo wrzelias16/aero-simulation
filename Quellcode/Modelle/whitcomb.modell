@@ -1,0 +1,14 @@
+# Whitcomb (integral superkritisch)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Whitcomb (integral superkritisch)
+beschreibung: Das ursprüngliche superkritische Profil von Richard Whitcomb (NASA).
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei whitcomb.dat, Original unverändert in Modelle/Profile
+lizenz: US-Regierungswerk (NASA), gemeinfrei; Datei aus der UIUC-Datenbank
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: whitcomb

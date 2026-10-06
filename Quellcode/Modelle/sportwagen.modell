@@ -1,0 +1,43 @@
+# Sportwagen-Coupé
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Sportwagen-Coupé
+beschreibung: Flaches Coupé mit Frontsplitter, langer Haube, Fließheck mit Abrisskante und Diffusor.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Abmessungen, kein bestimmtes Fahrzeugmodell
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 50
+winkel: 0
+reynolds: 1000
+boden: ja
+
+teil: Karosserie
+glatt: 6
+punkte:
+  0.012 0.042 !
+  0 0.07
+  0.006 0.092
+  0.06 0.118
+  0.25 0.15
+  0.34 0.168
+  0.47 0.252
+  0.55 0.27
+  0.64 0.262
+  0.8 0.205
+  0.93 0.17
+  0.965 0.178 !
+  0.972 0.165
+  0.995 0.14
+  1 0.105
+  0.99 0.085
+  0.95 0.062
+  0.86 0.04
+  0.6 0.035
+  0.3 0.035
+  0.08 0.04
+  0.01 0.036 !
+
+teil: Vorderrad
+kreis: 0.2 0.071 0.071 64
+
+teil: Hinterrad
+kreis: 0.79 0.071 0.071 64

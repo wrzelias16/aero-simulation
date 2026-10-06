@@ -1,0 +1,14 @@
+# NACA 2412 (Cessna 172)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NACA 2412 (Cessna 172)
+beschreibung: Leicht gewölbt, 12 % dick: Tragfläche der Cessna 172 und vieler Sportflugzeuge.
+quelle: NACA-Formeln aus Abbott/von Doenhoff, „Theory of Wing Sections“ bzw. NACA Report 824 (im Programm berechnet)
+lizenz: gemeinfrei (NACA, US-Regierungswerk)
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+naca: 2412 160

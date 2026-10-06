@@ -1,0 +1,36 @@
+# Unterboden mit Venturi-Kanal und Diffusor
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Unterboden mit Venturi-Kanal und Diffusor
+beschreibung: Schnitt durch einen Venturi-Kanal des Unterbodens (ab 2022): Einlauf, enge Kehle knapp über dem Boden, ansteigender Diffusor.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Maßen (Kanal-Einlauf etwa 250 mm, Kehle etwa 35 mm über der Bahn, Diffusor 1 m lang)
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 55
+winkel: 0
+reynolds: 1000
+detail: 0.01
+boden: ja
+bodenabstand: 0.01
+
+teil: Unterboden
+glatt: 6
+punkte:
+  0 0.08
+  0.005 0.098
+  0.02 0.112
+  0.08 0.13
+  0.3 0.16
+  0.55 0.17
+  0.75 0.16
+  0.92 0.14
+  1 0.128
+  1 0.105 !
+  0.985 0.096 !
+  0.97 0.1 !
+  0.8 0.045
+  0.62 0.006
+  0.45 0
+  0.3 0.004
+  0.15 0.026
+  0.04 0.06
+  0.01 0.066

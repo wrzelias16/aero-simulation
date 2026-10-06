@@ -1,0 +1,31 @@
+# Reisebus
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Reisebus
+beschreibung: Zwölf Meter langer Bus mit gerundeter Front und senkrechtem Heck.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Abmessungen, kein bestimmtes Fahrzeugmodell
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 55
+winkel: 0
+reynolds: 2000
+boden: ja
+
+teil: Aufbau
+glatt: 4
+punkte:
+  0.00417 0.03333
+  0 0.05
+  0 0.19167
+  0.00833 0.24167
+  0.03333 0.26667
+  0.98333 0.27083
+  1 0.25833 !
+  1 0.0375 !
+  0.975 0.02917
+  0.025 0.02917
+
+teil: Vorderrad
+kreis: 0.21667 0.04167 0.04167 64
+
+teil: Hinterrad
+kreis: 0.75 0.04167 0.04167 64

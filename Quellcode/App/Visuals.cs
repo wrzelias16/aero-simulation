@@ -41,27 +41,41 @@ namespace Windkanal
 
         public void Update(Solver s, float dt, float maxAge)
         {
+            // Bei vielen Rechenschritten pro Bild (GPU) in Teilschritten bewegen, damit ein Partikel
+            // pro Teilschritt höchstens etwa eine Zelle weit fliegt und der Strömung genau folgt.
+            float maxSub = 1.5f / Math.Max(1e-3f, s.U0);
+            int subs = Math.Max(1, (int)Math.Ceiling(dt / maxSub));
+            for (int k = 0; k < subs; k++) Advance(s, dt / subs, maxAge);
+        }
+
+        void Advance(Solver s, float dt, float maxAge)
+        {
             int nx = s.NX, ny = s.NY;
-            int i = 0;
-            while (i < Count)
+            float[] X = this.X, Y = this.Y, Age = this.Age;
+            Parallel.For(0, (Count + 2047) / 2048, chunk =>
             {
-                float x = X[i], y = Y[i], u1, v1, u2, v2;
-                Sample(s, x, y, out u1, out v1);
-                Sample(s, x + 0.5f * dt * u1, y + 0.5f * dt * v1, out u2, out v2);
-                x += dt * u2; y += dt * v2;
-                float age = Age[i] + dt;
-                int cx = (int)(x + 0.5f), cy = (int)(y + 0.5f);
-                bool dead = x < 0 || x >= s.VisibleNX - 1 || y < 0 || y >= ny - 1 || age > maxAge
-                            || s.Solid[Math.Min(ny - 1, cy) * nx + Math.Min(nx - 1, cx)];
-                if (dead)
+                int end = Math.Min(Count, (chunk + 1) * 2048);
+                for (int i = chunk * 2048; i < end; i++)
                 {
-                    Count--;
-                    X[i] = X[Count]; Y[i] = Y[Count]; Age[i] = Age[Count];
-                    continue;
+                    float x = X[i], y = Y[i], u1, v1, u2, v2;
+                    Sample(s, x, y, out u1, out v1);
+                    Sample(s, x + 0.5f * dt * u1, y + 0.5f * dt * v1, out u2, out v2);
+                    x += dt * u2; y += dt * v2;
+                    float age = Age[i] + dt;
+                    int cx = (int)(x + 0.5f), cy = (int)(y + 0.5f);
+                    bool dead = x < 0 || x >= s.VisibleNX - 1 || y < 0 || y >= ny - 1 || age > maxAge
+                                || s.Solid[Math.Min(ny - 1, cy) * nx + Math.Min(nx - 1, cx)];
+                    X[i] = x; Y[i] = y; Age[i] = dead ? float.NaN : age;
                 }
-                X[i] = x; Y[i] = y; Age[i] = age;
-                i++;
+            });
+            int alive = 0;
+            for (int i = 0; i < Count; i++)
+            {
+                if (float.IsNaN(Age[i])) continue;
+                X[alive] = X[i]; Y[alive] = Y[i]; Age[alive] = Age[i];
+                alive++;
             }
+            Count = alive;
 
             emitAcc += s.U0 * dt;
             const float spacing = 0.6f;
@@ -155,9 +169,13 @@ namespace Windkanal
         readonly int[] lutSpeed, lutPressure, lutVort;
         public float Scale, OffX, OffY;
 
-        static readonly int BgColor = Rgb(18, 21, 26);
-        static readonly int SmokeBg = Rgb(12, 14, 18);
+        public static int BgColor = Rgb(18, 21, 26);   // wird vom Design (hell/dunkel) gesetzt
         const int SolidR = 205, SolidG = 209, SolidB = 216;
+        // Rauchansicht: weißer Rauch auf fast schwarzem Grund, Körper dunkelgrau, damit er sich vom Rauch abhebt
+        const int SmokeBgR = 10, SmokeBgG = 12, SmokeBgB = 16;
+        const int SmokeR = 238, SmokeG = 241, SmokeB = 245;
+        const int SmokeSolidR = 58, SmokeSolidG = 63, SmokeSolidB = 72;
+        readonly int[] lutSmoke;
 
         public Renderer()
         {
@@ -171,6 +189,14 @@ namespace Windkanal
             lutVort = BuildLut(new float[,] {
                 { 0.00f, 120, 200, 255 }, { 0.30f, 30, 90, 190 }, { 0.50f, 14, 16, 22 },
                 { 0.70f, 190, 45, 45 }, { 1.00f, 255, 190, 110 } });
+            // weiche Deckkraft: dünner Rauch bleibt als Schleier sichtbar, dichter Rauch sättigt sanft
+            lutSmoke = new int[256];
+            for (int i = 0; i < 256; i++)
+            {
+                double a = (1 - Math.Exp(-2.4 * i / 255.0)) / (1 - Math.Exp(-2.4));
+                lutSmoke[i] = Rgb((int)(SmokeBgR + (SmokeR - SmokeBgR) * a), (int)(SmokeBgG + (SmokeG - SmokeBgG) * a),
+                                  (int)(SmokeBgB + (SmokeB - SmokeBgB) * a));
+            }
         }
 
         static int Rgb(int r, int g, int b) { return (255 << 24) | (r << 16) | (g << 8) | b; }
@@ -196,7 +222,8 @@ namespace Windkanal
 
         public static Color LutColor(ViewMode mode, float t, Renderer r)
         {
-            int[] lut = mode == ViewMode.Druck ? r.lutPressure : mode == ViewMode.Wirbel ? r.lutVort : r.lutSpeed;
+            int[] lut = mode == ViewMode.Druck ? r.lutPressure : mode == ViewMode.Wirbel ? r.lutVort
+                      : mode == ViewMode.Rauch ? r.lutSmoke : r.lutSpeed;
             int v = lut[Math.Max(0, Math.Min(255, (int)(t * 255)))];
             return Color.FromArgb(v);
         }
@@ -247,6 +274,9 @@ namespace Windkanal
                                 t = cp >= 0 ? 0.5f + 0.5f * cp : 0.5f + 0.25f * cp;
                                 break;
                             }
+                        case ViewMode.Rauch:
+                            t = s.Smoke[c];
+                            break;
                         case ViewMode.Wirbel:
                             {
                                 int xm = Math.Max(0, x - 1), xp = Math.Min(nx - 1, x + 1);
@@ -267,8 +297,10 @@ namespace Windkanal
                 }
             });
 
-            int[] lut = mode == ViewMode.Druck ? lutPressure : mode == ViewMode.Wirbel ? lutVort : lutSpeed;
+            int[] lut = mode == ViewMode.Druck ? lutPressure : mode == ViewMode.Wirbel ? lutVort
+                      : mode == ViewMode.Rauch ? lutSmoke : lutSpeed;
             bool fieldOn = mode != ViewMode.Rauch;
+            int solR = fieldOn ? SolidR : SmokeSolidR, solG = fieldOn ? SolidG : SmokeSolidG, solB = fieldOn ? SolidB : SmokeSolidB;
             float scale = Scale, offX = OffX, offY = OffY;
             int[] px = pix;
             int width = w;
@@ -292,27 +324,22 @@ namespace Windkanal
                     int c = y0 * nx + x0;
                     float w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
                     float sf = sol[c] * w00 + sol[c + 1] * w10 + sol[c + nx] * w01 + sol[c + nx + 1] * w11;
-                    int col;
-                    if (fieldOn)
-                    {
-                        float t = fld[c] * w00 + fld[c + 1] * w10 + fld[c + nx] * w01 + fld[c + nx + 1] * w11;
-                        col = lut[(int)(t * 255f)];
-                    }
-                    else col = SmokeBg;
+                    float t = fld[c] * w00 + fld[c + 1] * w10 + fld[c + nx] * w01 + fld[c + nx + 1] * w11;
+                    int col = lut[(int)(t * 255f)];
                     if (sf > 0.01f)
                     {
                         float a = sf < 0.35f ? 0f : sf > 0.65f ? 1f : (sf - 0.35f) / 0.3f;
                         int r = (col >> 16) & 255, g = (col >> 8) & 255, b = col & 255;
-                        r = (int)(r + (SolidR - r) * a); g = (int)(g + (SolidG - g) * a); b = (int)(b + (SolidB - b) * a);
+                        r = (int)(r + (solR - r) * a); g = (int)(g + (solG - g) * a); b = (int)(b + (solB - b) * a);
                         col = Rgb(r, g, b);
                     }
                     px[row + pxi] = col;
                 }
             });
 
-            if (smoke && particles != null)
+            if (smoke && fieldOn && particles != null)
             {
-                float alpha = fieldOn ? 0.45f : 0.8f;
+                const float alpha = 0.45f;
                 int dot = scale >= 2.5f ? 2 : 1;
                 for (int i = 0; i < particles.Count; i++)
                 {

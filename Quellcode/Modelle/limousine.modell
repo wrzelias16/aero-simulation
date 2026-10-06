@@ -1,0 +1,48 @@
+# Limousine (Stufenheck)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Limousine (Stufenheck)
+beschreibung: Mittelklasse-Limousine mit Motorhaube, Frontscheibe, Dach, Heckscheibe, Kofferraum mit Abrisskante und Diffusor.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Abmessungen, kein bestimmtes Fahrzeugmodell
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 50
+winkel: 0
+reynolds: 1000
+boden: ja
+
+teil: Karosserie
+glatt: 6
+punkte:
+  0.03 0.068
+  0.006 0.095
+  0 0.125
+  0.008 0.158
+  0.04 0.18
+  0.13 0.196
+  0.29 0.214
+  0.32 0.222
+  0.42 0.298
+  0.47 0.314
+  0.56 0.318
+  0.63 0.308
+  0.76 0.252
+  0.8 0.24
+  0.9 0.236
+  0.945 0.24
+  0.958 0.246 !
+  0.962 0.236
+  0.985 0.205
+  1 0.16
+  0.998 0.115
+  0.985 0.09
+  0.95 0.084
+  0.88 0.062
+  0.7 0.058
+  0.3 0.058
+  0.1 0.06
+
+teil: Vorderrad
+kreis: 0.19 0.075 0.075 64
+
+teil: Hinterrad
+kreis: 0.79 0.075 0.075 64

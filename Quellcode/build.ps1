@@ -7,7 +7,7 @@ $bin  = Join-Path $root 'bin'
 $csc  = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 New-Item -ItemType Directory -Force $bin | Out-Null
 
-# --- Icon erzeugen (Windkanal-Motiv, mehrere Größen, PNG-komprimiert) ---
+# --- Icon erzeugen (Windkanal-Motiv wie im App-Logo, mehrere Größen, PNG-komprimiert) ---
 Add-Type -AssemblyName System.Drawing
 $ico = Join-Path $bin 'app.ico'
 $sizes = 16, 24, 32, 48, 64, 128, 256
@@ -16,8 +16,8 @@ $pngs = foreach ($s in $sizes) {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = 'AntiAlias'
     $r = New-Object System.Drawing.RectangleF 0, 0, $s, $s
-    $bg = New-Object System.Drawing.Drawing2D.LinearGradientBrush $r, ([System.Drawing.Color]::FromArgb(24, 40, 72)), ([System.Drawing.Color]::FromArgb(12, 18, 30)), 90
-    $rad = [single]($s * 0.22)
+    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(21, 23, 26))
+    $rad = [single]($s * 0.3)
     $path = New-Object System.Drawing.Drawing2D.GraphicsPath
     $path.AddArc(0, 0, $rad * 2, $rad * 2, 180, 90)
     $path.AddArc($s - $rad * 2 - 1, 0, $rad * 2, $rad * 2, 270, 90)
@@ -25,23 +25,24 @@ $pngs = foreach ($s in $sizes) {
     $path.AddArc(0, $s - $rad * 2 - 1, $rad * 2, $rad * 2, 90, 90)
     $path.CloseFigure()
     $g.FillPath($bg, $path)
-    $colors = @([System.Drawing.Color]::FromArgb(84, 200, 255), [System.Drawing.Color]::FromArgb(106, 253, 98), [System.Drawing.Color]::FromArgb(255, 159, 67))
-    $cy = $s * 0.5; $cx = $s * 0.42; $cr = $s * 0.13
-    for ($i = 0; $i -lt 3; $i++) {
-        $pen = New-Object System.Drawing.Pen $colors[$i], ([single][Math]::Max(1.2, $s * 0.055))
+    # gleiches Motiv wie Theme.DrawLogo: zwei Stromlinienpaare um einen Zylinder, einfarbig weiß
+    $cy = $s * 0.5; $cx = $s * 0.42; $cr = $s * 0.12
+    $offs = 0.13, 0.25; $alpha = 255, 150
+    for ($i = 0; $i -lt 2; $i++) {
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb($alpha[$i], 255, 255, 255)), ([single][Math]::Max(1.3, $s * 0.06))
+        $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
         foreach ($sign in -1, 1) {
-            $off = $sign * $s * (0.10 + 0.11 * $i)
-            $pts = for ($k = 0; $k -le 24; $k++) {
-                $x = $s * (0.08 + 0.84 * $k / 24)
-                $d = ($x - $cx) / ($s * 0.18)
-                $bump = $sign * $s * (0.16 - 0.035 * $i) * [Math]::Exp(-$d * $d)
-                New-Object System.Drawing.PointF ([single]$x), ([single]($cy + $off + $bump))
+            $pts = for ($k = 0; $k -le 20; $k++) {
+                $x = $s * (0.18 + 0.66 * $k / 20)
+                $d = ($x - $cx) / ($s * 0.17)
+                $y = $cy + $sign * $s * ($offs[$i] + (0.13 - 0.04 * $i) * [Math]::Exp(-$d * $d))
+                New-Object System.Drawing.PointF ([single]$x), ([single]$y)
             }
             $g.DrawLines($pen, [System.Drawing.PointF[]]$pts)
         }
         $pen.Dispose()
     }
-    $g.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(230, 233, 238))), [single]($cx - $cr), [single]($cy - $cr), [single]($cr * 2), [single]($cr * 2))
+    $g.FillEllipse([System.Drawing.Brushes]::White, [single]($cx - $cr), [single]($cy - $cr), [single]($cr * 2), [single]($cr * 2))
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -61,12 +62,32 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($p in $pngs) { $bw.Write($p) }
 $bw.Close()
 
+# --- Modelle (Datendateien) als eingebettete Ressourcen ---
+$modelRes = @("/resource:$(Join-Path $root 'Modelle\katalog.txt'),Modelle.katalog.txt")
+$modelRes += Get-ChildItem (Join-Path $root 'Modelle') -Filter *.modell | ForEach-Object { "/resource:$($_.FullName),Modelle.$($_.Name)" }
+$modelRes += Get-ChildItem (Join-Path $root 'Modelle\Profile') -Filter *.dat | ForEach-Object { "/resource:$($_.FullName),Profile.$($_.Name)" }
+
 # --- App ---
 $app = Join-Path $bin 'Windkanal2D.exe'
 & $csc /nologo /target:winexe /unsafe /optimize+ /platform:x64 /win32icon:$ico `
     /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:$app `
-    (Join-Path $root 'App\*.cs')
+    "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
+    "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
+    $modelRes (Join-Path $root 'App\*.cs')
 if ($LASTEXITCODE -ne 0) { throw 'App-Build fehlgeschlagen' }
+
+# --- Validierungstest (Konsole) ---
+$test = Join-Path $bin 'ValidationTest.exe'
+& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /out:$test $modelRes `
+    (Join-Path $root 'App\Solver.cs') (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') `
+    (Join-Path $root 'App\Models.cs') (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'Test\ValidationTest.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Test-Build fehlgeschlagen' }
+
+# --- Modell-Vorschau (prüft alle Modelle und zeichnet eine Übersicht) ---
+$preview = Join-Path $bin 'ModellVorschau.exe'
+& $csc /nologo /optimize+ /platform:x64 /r:System.Drawing.dll /out:$preview $modelRes `
+    (Join-Path $root 'App\Shapes.cs') (Join-Path $root 'App\Models.cs') (Join-Path $root 'Test\ModellVorschau.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Vorschau-Build fehlgeschlagen' }
 
 # --- Installer (App als eingebettete Ressource) ---
 $setup = Join-Path $bin 'Setup.exe'

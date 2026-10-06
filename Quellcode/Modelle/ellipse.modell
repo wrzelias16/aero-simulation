@@ -1,0 +1,13 @@
+# Ellipse 2 : 1
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Ellipse 2 : 1
+beschreibung: Elliptischer Zylinder, halb so dick wie lang: Übergang zwischen Zylinder und Profil.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Länge
+groesse: 18
+winkel: 0
+reynolds: 500
+
+teil: Ellipse
+ellipse: 0 0 0.5 0.25 160

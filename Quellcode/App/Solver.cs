@@ -9,8 +9,10 @@ namespace Windkanal
     /// Ränder: Geschwindigkeitseinlass links, Null-Gradient-Auslass rechts mit Dämpfungszone,
     /// oben/unten wahlweise reibungsfrei (Symmetrie) oder mit Haftung,
     /// Körper per Halfway-Bounce-Back, Kräfte per Impulsaustausch-Methode.
+    /// Rechnet auf der Grafikkarte (OpenCL, <see cref="GpuLbm"/>), wenn eine da ist, sonst auf allen CPU-Kernen.
+    /// Mit der Umgebungsvariable WK_CPU=1 wird die CPU erzwungen.
     /// </summary>
-    public sealed class Solver
+    public sealed class Solver : IDisposable
     {
         public const byte FLUID = 0, BOUNDARY = 1, SOLID = 2;
 
@@ -40,13 +42,28 @@ namespace Windkanal
         /// <summary>Kraft auf den Körper im letzten Zeitschritt (Gittereinheiten).</summary>
         public double Fx, Fy;
 
+        /// <summary>
+        /// Rauchdichte 0..1 je Zelle für die Rauchansicht. Ein Rechen am Einlass gibt dünne Rauchfäden ab,
+        /// die mit der Strömung mitgeführt werden (siehe <see cref="AdvectSmoke"/>).
+        /// Auf der GPU erst nach <see cref="ReadSmoke"/> aktuell.
+        /// </summary>
+        public readonly float[] Smoke;
+        float[] smokeHat, smokeBar, smokeNew;
+        bool smokeStale;
+
+        GpuLbm gpu;
+        readonly double[] batchFx = new double[GpuLbm.MaxBatch], batchFy = new double[GpuLbm.MaxBatch];
+        /// <summary>Womit gerechnet wird, z. B. "GPU (NVIDIA GeForce RTX 5070 Ti)" oder "CPU (20 Kerne)".</summary>
+        public readonly string Backend;
+        /// <summary>Warum die GPU nicht genutzt wird (null, wenn sie genutzt wird).</summary>
+        public readonly string GpuUnavailableReason;
+        public bool OnGpu { get { return gpu != null; } }
+
         public Solver(int visibleNx, int ny)
         {
             int nx = visibleNx + visibleNx * 3 / 20;
             VisibleNX = visibleNx;
             NX = nx; NY = ny; N = nx * ny;
-            fSrc = new float[9 * N];
-            fDst = new float[9 * N];
             Flags = new byte[N];
             Solid = new bool[N];
             Rho = new float[N];
@@ -61,8 +78,29 @@ namespace Windkanal
                 float s = (x - start) / (float)(nx - 1 - start);
                 sponge[x] = s * s;
             }
+            string reason;
+            if (Environment.GetEnvironmentVariable("WK_CPU") == "1") reason = "per WK_CPU=1 abgeschaltet";
+            else gpu = GpuLbm.TryCreate(nx, ny, sponge, out reason);
+            Smoke = new float[N];
+            if (gpu != null) Backend = "GPU (" + GpuLbm.DeviceName + ")";
+            else
+            {
+                GpuUnavailableReason = reason;
+                Backend = "CPU (" + Environment.ProcessorCount + " Kerne)";
+                fSrc = new float[9 * N];
+                fDst = new float[9 * N];
+                smokeHat = new float[N];
+                smokeBar = new float[N];
+                smokeNew = new float[N];
+            }
             RebuildFlags();
             Reset();
+        }
+
+        public void Dispose()
+        {
+            if (gpu != null) gpu.Dispose();
+            gpu = null;
         }
 
         public float Tau { get { return 3f * Nu + 0.5f; } }
@@ -98,9 +136,12 @@ namespace Windkanal
             // Start aus der Ruhe – die Anströmung fährt wie beim echten Gebläse sanft hoch.
             for (int c = 0; c < N; c++)
             {
-                SetEquilibrium(c, 1f, 0f, 0f);
+                if (gpu == null) SetEquilibrium(c, 1f, 0f, 0f);
                 Rho[c] = 1f; Ux[c] = 0f; Uy[c] = 0f;
+                Smoke[c] = 0f;
             }
+            if (gpu != null) gpu.Reset();
+            smokeStale = false;
         }
 
         /// <summary>
@@ -120,6 +161,7 @@ namespace Windkanal
             if (x1 < 0) return;
             float h = Math.Max(3f, y1 - y0 + 1);
             float px = x1 + h, py = (y0 + y1) / 2f, inv2s2 = 1f / (2f * h * h);
+            if (gpu != null) { gpu.Kick(px, py, inv2s2, U0); return; }
             for (int c = 0; c < N; c++)
             {
                 if (Solid[c]) continue;
@@ -152,19 +194,46 @@ namespace Windkanal
         /// <summary>Übernimmt eine neue Hindernismaske, ohne die Strömung neu zu starten.</summary>
         public void ApplyMask(bool[] mask)
         {
+            int[] changed = gpu != null ? new int[N] : null;
+            int nChanged = 0;
             for (int c = 0; c < N; c++)
             {
                 int x = c % NX;
                 bool s = mask[c] && x >= 2 && x <= VisibleNX - 3;
                 if (s == Solid[c]) continue;
                 Solid[c] = s;
-                SetEquilibrium(c, 1f, 0f, 0f);
+                if (gpu != null) changed[nChanged++] = c;
+                else SetEquilibrium(c, 1f, 0f, 0f);
                 Rho[c] = 1f; Ux[c] = 0f; Uy[c] = 0f;
             }
-            RebuildFlags();
+            RebuildFlags(changed, nChanged);
         }
 
-        void RebuildFlags()
+        void RebuildFlags(int[] changed = null, int nChanged = 0)
+        {
+            RebuildFlagsCpu();
+            if (gpu == null) return;
+            // Kraft-Slots: jede Randzelle mit Verbindung zum Körper bekommt einen Platz,
+            // die GPU summiert die Impulsaustausch-Beiträge dieser Zellen je Schritt.
+            var slotOf = new int[N];
+            int slots = 0;
+            for (int y = 0; y < NY; y++)
+                for (int x = 0; x < NX; x++)
+                {
+                    int c = y * NX + x;
+                    slotOf[c] = -1;
+                    if (Flags[c] != BOUNDARY || x < 1 || x > NX - 2) continue;
+                    for (int i = 1; i < 9; i++)
+                    {
+                        int sx = x - CX[i], sy = y - CY[i];
+                        if (sy < 0 || sy >= NY) continue;
+                        if (Solid[sy * NX + sx]) { slotOf[c] = slots++; break; }
+                    }
+                }
+            gpu.ApplyMask(Flags, slotOf, slots, changed, nChanged);
+        }
+
+        void RebuildFlagsCpu()
         {
             for (int y = 0; y < NY; y++)
             {
@@ -184,7 +253,54 @@ namespace Windkanal
             }
         }
 
+        /// <summary>Ein Zeitschritt. Fx/Fy, Rho, Ux, Uy sind danach aktuell.</summary>
         public void Step()
+        {
+            if (gpu != null) StepMany(1, null, null);
+            else StepCpu();
+        }
+
+        /// <summary>
+        /// 'count' Zeitschritte am Stück; die Kraft jedes einzelnen Schritts landet in fx/fy (dürfen null sein).
+        /// Auf der GPU laufen die Schritte ohne Warten hintereinander, Rho/Ux/Uy werden nur am Ende zurückgeholt.
+        /// </summary>
+        public void StepMany(int count, double[] fx, double[] fy)
+        {
+            if (gpu == null)
+            {
+                for (int k = 0; k < count; k++)
+                {
+                    StepCpu();
+                    if (fx != null) { fx[k] = Fx; fy[k] = Fy; }
+                }
+                return;
+            }
+            float smagK = 18f * 1.41421356f * SmagorinskyCs * SmagorinskyCs;
+            for (int done = 0; done < count; )
+            {
+                int m = Math.Min(count - done, GpuLbm.MaxBatch);
+                for (int k = 0; k < m; k++)
+                {
+                    if (Steps == RampSteps) Kick();
+                    float uIn = InletVelocity;
+                    float tau0 = Tau;
+                    float spongeAmp = Math.Max(0f, 1.0f - tau0);
+                    gpu.EnqueueStep(k, tau0, spongeAmp, smagK, uIn, NoSlipWalls);
+                    Steps++;
+                }
+                gpu.ReadForces(m, batchFx, batchFy, 0);
+                if (fx != null)
+                {
+                    Array.Copy(batchFx, 0, fx, done, m);
+                    Array.Copy(batchFy, 0, fy, done, m);
+                }
+                Fx = batchFx[m - 1]; Fy = batchFy[m - 1];
+                done += m;
+            }
+            gpu.ReadMacros(Rho, Ux, Uy);
+        }
+
+        void StepCpu()
         {
             if (Steps == RampSteps) Kick();
             float uIn = InletVelocity;
@@ -361,6 +477,108 @@ namespace Windkanal
                 }
             }
             rowFx[y] = fxs; rowFy[y] = fys;
+        }
+
+        // ------------------------------------------------------------ Rauch
+
+        /// <summary>Anzahl der Rauchfäden am Einlass.</summary>
+        public int SmokeStreaks { get { return Math.Max(16, NY / 9); } }
+
+        /// <summary>
+        /// Führt die Rauchdichte mit der aktuellen Strömung um 'steps' Zeitschritte weiter.
+        /// Verfahren: semi-Lagrange (Rückverfolgung entlang der Geschwindigkeit) mit MacCormack-Korrektur,
+        /// damit die Rauchfäden scharf bleiben statt zu verschmieren. Pro Teilschritt wandert der Rauch
+        /// höchstens gut eine Zelle weit.
+        /// </summary>
+        public void AdvectSmoke(int steps)
+        {
+            if (steps <= 0) return;
+            float speed = 2f * Math.Max(U0, 1e-3f);
+            int subs = Math.Max(1, (int)Math.Ceiling(steps * speed / 1.2f));
+            float dt = steps / (float)subs;
+            int streaks = SmokeStreaks;
+            if (gpu != null)
+            {
+                for (int k = 0; k < subs; k++) gpu.EnqueueSmoke(dt, streaks);
+                smokeStale = true;
+                return;
+            }
+            for (int k = 0; k < subs; k++)
+            {
+                float[] phi = Smoke, hat = smokeHat, bar = smokeBar, nw = smokeNew;
+                Parallel.For(0, NY, y => SmokeTrace(y, phi, hat, dt));
+                Parallel.For(0, NY, y => SmokeTrace(y, hat, bar, -dt));
+                Parallel.For(0, NY, y => SmokeCorrect(y, phi, hat, bar, nw, dt, streaks));
+                Array.Copy(nw, Smoke, N);
+            }
+        }
+
+        /// <summary>Holt die Rauchdichte von der Grafikkarte (auf der CPU ohne Wirkung).</summary>
+        public void ReadSmoke()
+        {
+            if (gpu == null || !smokeStale) return;
+            gpu.ReadSmoke(Smoke);
+            smokeStale = false;
+        }
+
+        /// <summary>Dichte eines Rauchfadens am Einlass: weiches Profil, gut eine Zelle breit.</summary>
+        public static float SmokeInlet(int y, int ny, int streaks)
+        {
+            float s = ny / (float)streaks;
+            float f = y / s - 0.5f;
+            float d = Math.Abs(f - (float)Math.Round(f)) * s;
+            return Math.Max(0f, Math.Min(1f, 1.6f - d / 1.1f));
+        }
+
+        static float Bilinear(float[] a, float x, float y, int nx, int ny)
+        {
+            if (x < 0) x = 0; if (x > nx - 1.001f) x = nx - 1.001f;
+            if (y < 0) y = 0; if (y > ny - 1.001f) y = ny - 1.001f;
+            int x0 = (int)x, y0 = (int)y;
+            float fx = x - x0, fy = y - y0;
+            int c = y0 * nx + x0;
+            return (a[c] * (1 - fx) + a[c + 1] * fx) * (1 - fy) + (a[c + nx] * (1 - fx) + a[c + nx + 1] * fx) * fy;
+        }
+
+        /// <summary>Rückverfolgung (Mittelpunktregel) um dt; negatives dt verfolgt vorwärts.</summary>
+        void BackTrace(int x, int y, float dt, out float bx, out float by)
+        {
+            int c = y * NX + x;
+            float mx = x - 0.5f * dt * Ux[c], my = y - 0.5f * dt * Uy[c];
+            bx = x - dt * Bilinear(Ux, mx, my, NX, NY);
+            by = y - dt * Bilinear(Uy, mx, my, NX, NY);
+        }
+
+        void SmokeTrace(int y, float[] src, float[] dst, float dt)
+        {
+            for (int x = 0; x < NX; x++)
+            {
+                int c = y * NX + x;
+                if (Solid[c]) { dst[c] = 0f; continue; }
+                float bx, by;
+                BackTrace(x, y, dt, out bx, out by);
+                dst[c] = Bilinear(src, bx, by, NX, NY);
+            }
+        }
+
+        void SmokeCorrect(int y, float[] phi, float[] hat, float[] bar, float[] dst, float dt, int streaks)
+        {
+            float inlet = SmokeInlet(y, NY, streaks);
+            for (int x = 0; x < NX; x++)
+            {
+                int c = y * NX + x;
+                if (Solid[c]) { dst[c] = 0f; continue; }
+                if (x <= 1) { dst[c] = inlet; continue; }
+                float bx, by;
+                BackTrace(x, y, dt, out bx, out by);
+                if (bx < 0) bx = 0; if (bx > NX - 1.001f) bx = NX - 1.001f;
+                if (by < 0) by = 0; if (by > NY - 1.001f) by = NY - 1.001f;
+                int b = (int)by * NX + (int)bx;
+                float lo = Math.Min(Math.Min(phi[b], phi[b + 1]), Math.Min(phi[b + NX], phi[b + NX + 1]));
+                float hi = Math.Max(Math.Max(phi[b], phi[b + 1]), Math.Max(phi[b + NX], phi[b + NX + 1]));
+                float v = hat[c] + 0.5f * (phi[c] - bar[c]);
+                dst[c] = v < lo ? lo : v > hi ? hi : v;
+            }
         }
 
         /// <summary>Freistromdichte (am Einlass gemessen) als Druckreferenz.</summary>

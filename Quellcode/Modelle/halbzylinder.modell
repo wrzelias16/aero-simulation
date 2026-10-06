@@ -1,0 +1,14 @@
+# Halbzylinder (D-Profil)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Halbzylinder (D-Profil)
+beschreibung: Rund nach vorn, flacher Rücken: feste Ablösung an den Kanten, breites Totwasser.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Durchmesser
+groesse: 12
+winkel: 0
+reynolds: 200
+
+teil: Halbzylinder
+punkte:
+  bogen 0 0 0.5 90 270 40

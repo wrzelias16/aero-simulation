@@ -1,0 +1,13 @@
+# Zylinder
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Zylinder
+beschreibung: Kreiszylinder: der Klassiker der Strömungslehre mit Kármánscher Wirbelstraße ab Re ≈ 47.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Durchmesser
+groesse: 10
+winkel: 0
+reynolds: 100
+
+teil: Zylinder
+kreis: 0 0 0.5 160

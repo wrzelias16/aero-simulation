@@ -1,0 +1,16 @@
+# Zwei Zylinder hintereinander
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Zwei Zylinder hintereinander
+beschreibung: Tandem im Abstand von 3 Durchmessern: der hintere sitzt im Nachlauf des vorderen.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Durchmesser
+groesse: 8
+winkel: 0
+reynolds: 150
+
+teil: vorn
+kreis: -1.5 0 0.5 120
+
+teil: hinten
+kreis: 1.5 0 0.5 120

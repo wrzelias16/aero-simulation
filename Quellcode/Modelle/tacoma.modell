@@ -1,0 +1,32 @@
+# Brückenquerschnitt Tacoma Narrows (1940)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Brückenquerschnitt Tacoma Narrows (1940)
+beschreibung: H-förmiger Querschnitt der eingestürzten Tacoma-Narrows-Brücke: 2,4 m hohe Vollwandträger am Rand, Fahrbahn dazwischen.
+quelle: Maße aus öffentlichen Berichten zum Einsturz 1940 (Breite 11,9 m, Trägerhöhe 2,44 m); Blechdicken auf 0,15 m vergrößert, damit sie aufs Gitter passen
+lizenz: Maße öffentlich, Koordinaten selbst berechnet
+bezug: Brückenbreite
+groesse: 50
+winkel: 0
+reynolds: 1000
+detail: 0.01261
+
+teil: Träger links
+punkte:
+  -0.5 -0.10252 !
+  -0.48739 -0.10252 !
+  -0.48739 0.10252 !
+  -0.5 0.10252 !
+
+teil: Träger rechts
+punkte:
+  0.48739 -0.10252 !
+  0.5 -0.10252 !
+  0.5 0.10252 !
+  0.48739 0.10252 !
+
+teil: Fahrbahn
+punkte:
+  -0.5 0.04622 !
+  0.5 0.04622 !
+  0.5 0.06303 !
+  -0.5 0.06303 !

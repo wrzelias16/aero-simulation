@@ -1,0 +1,24 @@
+# Verdichtergitter (3 Schaufeln)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Verdichtergitter (3 Schaufeln)
+beschreibung: Ebenes Schaufelgitter wie in einem Axialverdichter: drei NACA-65-Profile übereinander, 30° gestaffelt.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei naca652415.dat, Original unverändert in Modelle/Profile; Anordnung Eigene Konstruktion für Windkanal 2D
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 20
+winkel: 0
+reynolds: 1000
+
+teil: Schaufel 1
+profil: naca652415
+winkel: 10
+lage: -0.45 -0.78
+
+teil: Schaufel 2
+profil: naca652415
+winkel: 10
+
+teil: Schaufel 3
+profil: naca652415
+winkel: 10
+lage: 0.45 0.78

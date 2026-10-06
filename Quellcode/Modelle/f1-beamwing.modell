@@ -1,0 +1,24 @@
+# Beam Wing (2 Elemente)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Beam Wing (2 Elemente)
+beschreibung: Der untere Heckflügel über dem Diffusor: zieht die Strömung aus dem Diffusor und verstärkt so den Unterboden.
+quelle: Eppler E423 umgedreht (UIUC-Datenbank, e423.dat); Anordnung Eigene Konstruktion für Windkanal 2D
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Flügeltiefe
+groesse: 30
+winkel: 0
+reynolds: 1000
+detail: 0.022
+
+teil: Element 1
+profil: e423
+sehne: 0.55
+winkel: -2
+spiegeln: ja
+
+teil: Element 2
+profil: e423
+sehne: 0.45
+winkel: -20
+lage: 0.51968 0.06403
+spiegeln: ja
