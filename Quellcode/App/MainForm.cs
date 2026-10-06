@@ -112,7 +112,15 @@ namespace Windkanal
             // --- Kopfzeile: Ansicht als Pillen-Navigation, rechts die Knöpfe
             segView = new Segmented { BackColor = Theme.Bg };
             segView.Items.AddRange(new[] { "Geschwindigkeit", "Druck", "Wirbelstärke", "Rauch" });
-            segView.SelectedIndexChanged += delegate { viewMode = (ViewMode)segView.SelectedIndex; dirty = true; cardView.Invalidate(); };
+            segView.SelectedIndexChanged += delegate
+            {
+                viewMode = (ViewMode)segView.SelectedIndex;
+                // die Rauchansicht zeigt eigenen Rauch; die Rauchlinien gehören zu den Farbansichten
+                if (chkSmoke != null) chkSmoke.Visible = viewMode != ViewMode.Rauch;
+                if (viewMode == ViewMode.Rauch && particles != null) particles.Clear();
+                dirty = true;
+                cardView.Invalidate();
+            };
             btnRun = new FlatButton { Text = "Pause", Icon = "", Primary = true, BackColor = Theme.Bg };
             btnReset = new FlatButton { Icon = "", BackColor = Theme.Bg };
             btnInfo = new FlatButton { Icon = "", BackColor = Theme.Bg };
@@ -376,7 +384,7 @@ namespace Windkanal
             suppress = true;
             sizePercent = Shapes.DefaultSizePercent(k);
             tbSize.Value = sizePercent;
-            angleDeg = k == ShapeKind.Naca0012 || k == ShapeKind.Naca2412 || k == ShapeKind.Naca4412 ? 5 : 0;
+            angleDeg = Shapes.DefaultAngle(k);
             tbAngle.Value = angleDeg;
             reynolds = Shapes.DefaultReynolds(k);
             tbRe.Value = ReToSlider(reynolds);
@@ -440,18 +448,21 @@ namespace Windkanal
             }
             else
             {
-                float px = (shape == ShapeKind.Auto ? 0.3f : 0.25f) * solver.VisibleNX;
+                bool vehicle = Shapes.IsVehicle(shape);
+                float px = (vehicle ? 0.3f : 0.25f) * solver.VisibleNX;
                 float py = (ny - 1) / 2f;
-                var pts = Shapes.Transform(Shapes.Polygon(shape), sizeCells, angleDeg, px, py);
-                if (shape == ShapeKind.Auto)
+                var parts = Shapes.TransformParts(Shapes.Parts(shape), sizeCells, angleDeg, px, py);
+                if (vehicle)
                 {
-                    // Auto knapp über dem (reibungsfreien = mitbewegten) Boden platzieren
+                    // Fahrzeug knapp über dem (reibungsfreien = mitbewegten) Boden platzieren
                     float minY = float.MaxValue;
-                    foreach (var p in pts) minY = Math.Min(minY, p.Y);
+                    foreach (var pts in parts)
+                        foreach (var p in pts) minY = Math.Min(minY, p.Y);
                     float shift = 3f - minY;
-                    for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(pts[i].X, pts[i].Y + shift);
+                    foreach (var pts in parts)
+                        for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(pts[i].X, pts[i].Y + shift);
                 }
-                Shapes.Fill(pts, mask, nx, ny);
+                foreach (var pts in parts) Shapes.Fill(pts, mask, nx, ny);
             }
 
             int rows = 0;
@@ -521,13 +532,15 @@ namespace Windkanal
                     warningUntil = now + 9000;
                     return;
                 }
-                if (showSmoke) particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
+                solver.AdvectSmoke(steps);
+                if (showSmoke && viewMode != ViewMode.Rauch) particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
                 dirty = true;
             }
 
             if (dirty && view.ClientSize.Width > 0 && view.ClientSize.Height > 0)
             {
                 renderer.EnsureSize(view.ClientSize.Width, view.ClientSize.Height);
+                if (viewMode == ViewMode.Rauch) solver.ReadSmoke();
                 renderer.Render(solver, particles, viewMode, showSmoke, refLen);
                 view.Invalidate();
                 dirty = false;
@@ -677,6 +690,12 @@ namespace Windkanal
                 x += bw + 8;
                 Theme.Draw(g, hi, Theme.Small, Theme.Muted, new Rectangle(x, fy, 40, 30), TextFormatFlags.VerticalCenter);
                 legendRight = x + Theme.Width(hi, Theme.Small) + 24;
+            }
+            else
+            {
+                const string hint = "Rauchfäden vom Rechen am Einlass, mit der Strömung mitgeführt";
+                Theme.Draw(g, hint, Theme.Small, Theme.Muted, new Rectangle(Card.Pad, fy, W / 2, 30), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                legendRight = Card.Pad + Math.Min(W / 2, Theme.Width(hint, Theme.Small)) + 24;
             }
             var sr = new Rectangle(legendRight, fy, W - Card.Pad - legendRight, 30);
             if (statusWarn)

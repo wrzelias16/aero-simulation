@@ -18,6 +18,7 @@ namespace Windkanal
                     int.Parse(args[0]), int.Parse(args[1]), float.Parse(args[2], ci), double.Parse(args[3], ci), int.Parse(args[4]));
                 return;
             }
+            SmokeCheck();
             Run("Stabilität Zylinder 40 % Versperrung Re=20000", 400, 160, 64, 20000, 25000);
             Run("Stabilität Quadrat 60 % Versperrung Re=20000", 400, 160, 96, 20000, 25000, ShapeKind.Quadrat);
             Run("Stabilität Zylinder Re=20000", 600, 240, 24, 20000, 20000);
@@ -25,6 +26,51 @@ namespace Windkanal
             Run("Zylinder Re=100, Versperrung 8 %", 900, 360, 30, 100, 40000);
             Run("Zylinder Re=100, Versperrung 4 %", 1200, 480, 20, 100, 30000);
             Run("Zylinder Re=20, Versperrung 8 %", 900, 360, 30, 20, 30000);
+        }
+
+        /// <summary>
+        /// Rauch-Mitführung: der Rauch muss den Auslass erreichen, im Körper null bleiben und
+        /// auf GPU und CPU (gleiche Strömung, gleiche Formeln) fast dasselbe Bild ergeben.
+        /// </summary>
+        static void SmokeCheck()
+        {
+            const int nx = 300, ny = 120, steps = 6000;
+            float[] gpuSmoke = null, cpuSmoke = null;
+            bool[] solid = null;
+            int fullNx = 0;
+            string prev = Environment.GetEnvironmentVariable("WK_CPU");
+            for (int pass = 0; pass < 2; pass++)
+            {
+                if (pass == 1) Environment.SetEnvironmentVariable("WK_CPU", "1");
+                using (var s = new Solver(nx, ny))
+                {
+                    if (pass == 0 && !s.OnGpu) continue;
+                    var mask = new bool[s.N];
+                    Shapes.Fill(Shapes.Transform(Shapes.Polygon(ShapeKind.Zylinder), 20, 0, nx * 0.25f, (ny - 1) / 2f), mask, s.NX, ny);
+                    s.U0 = Solver.ChooseU0(100, 20, 20.0 / ny);
+                    s.Nu = (float)(s.U0 * 20 / 100);
+                    s.ApplyMask(mask);
+                    s.Reset();
+                    for (int t = 0; t < steps; t += 50) { s.StepMany(50, null, null); s.AdvectSmoke(50); }
+                    s.ReadSmoke();
+                    if (pass == 0) gpuSmoke = (float[])s.Smoke.Clone(); else cpuSmoke = (float[])s.Smoke.Clone();
+                    solid = s.Solid; fullNx = s.NX;
+                }
+            }
+            Environment.SetEnvironmentVariable("WK_CPU", prev);
+
+            double outlet = 0, inSolid = 0;
+            for (int y = 0; y < ny; y++) outlet += cpuSmoke[y * fullNx + nx - 5];
+            for (int c = 0; c < cpuSmoke.Length; c++) if (solid[c]) inSolid += cpuSmoke[c];
+            string cmp = "keine GPU";
+            if (gpuSmoke != null)
+            {
+                double diff = 0;
+                for (int c = 0; c < cpuSmoke.Length; c++) diff += Math.Abs(gpuSmoke[c] - cpuSmoke[c]);
+                cmp = "mittlere Abweichung GPU/CPU " + (diff / cpuSmoke.Length).ToString("0.0000");
+            }
+            Console.WriteLine("Rauch: Dichte am Auslass " + (outlet / ny).ToString("0.000") + ", im Körper " + inSolid.ToString("0") + ", " + cmp
+                + (outlet / ny > 0.05 && inSolid == 0 ? " -> OK" : " -> FEHLER"));
         }
 
         static void Run(string name, int nx, int ny, float d, double re, int steps,

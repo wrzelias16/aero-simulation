@@ -85,8 +85,8 @@ namespace Windkanal
 
         readonly int nx, ny, n, realSize;
         IntPtr program;
-        IntPtr kStep, kBound, kReduce, kReset, kSetEq, kKick;
-        IntPtr bufA, bufB, bFlag, bSponge, bRho, bUx, bUy, bSlot, bCell, bForce, bList;
+        IntPtr kStep, kBound, kReduce, kReset, kSetEq, kKick, kSmokeTrace, kSmokeCorrect, kSmokeClear;
+        IntPtr bufA, bufB, bFlag, bSponge, bRho, bUx, bUy, bSlot, bCell, bForce, bList, bSmoke, bSmokeHat, bSmokeBar, bSmokeNew;
         int cellCap, listCap, slots;
         bool swapped;
         readonly double[] forceD;
@@ -140,6 +140,9 @@ namespace Windkanal
             kReset = Kernel("lbm_reset");
             kSetEq = Kernel("lbm_set_eq");
             kKick = Kernel("lbm_kick");
+            kSmokeTrace = Kernel("smoke_trace");
+            kSmokeCorrect = Kernel("smoke_correct");
+            kSmokeClear = Kernel("smoke_clear");
 
             bufA = Buffer(9L * n * 4);
             bufB = Buffer(9L * n * 4);
@@ -150,6 +153,10 @@ namespace Windkanal
             bUy = Buffer(n * 4L);
             bSlot = Buffer(n * 4L);
             bForce = Buffer(2L * MaxBatch * realSize);
+            bSmoke = Buffer(n * 4L);
+            bSmokeHat = Buffer(n * 4L);
+            bSmokeBar = Buffer(n * 4L);
+            bSmokeNew = Buffer(n * 4L);
             Check(CL.clEnqueueWriteBuffer(queue, bSponge, 1, UIntPtr.Zero, (UIntPtr)(nx * 4L), sponge, 0, IntPtr.Zero, IntPtr.Zero), "Schreiben");
         }
 
@@ -191,6 +198,8 @@ namespace Windkanal
         {
             Arg(kReset, 0, bufA); Arg(kReset, 1, bufB); Arg(kReset, 2, bRho); Arg(kReset, 3, bUx); Arg(kReset, 4, bUy);
             Run(kReset, n, 128);
+            Arg(kSmokeClear, 0, bSmoke);
+            Run(kSmokeClear, n, 128);
         }
 
         /// <summary>Neue Zellmarkierungen und Kraft-Slots; 'changed' Zellen werden auf Ruhe-Gleichgewicht gesetzt.</summary>
@@ -244,6 +253,26 @@ namespace Windkanal
             swapped = !swapped;
         }
 
+        /// <summary>Ein Teilschritt der Rauch-Mitführung (wie Solver.AdvectSmoke), mit der aktuellen Geschwindigkeit.</summary>
+        public void EnqueueSmoke(float dt, int streaks)
+        {
+            Arg(kSmokeTrace, 0, bSmoke); Arg(kSmokeTrace, 1, bSmokeHat); Arg(kSmokeTrace, 2, bUx); Arg(kSmokeTrace, 3, bUy);
+            Arg(kSmokeTrace, 4, bFlag); Arg(kSmokeTrace, 5, dt);
+            Run(kSmokeTrace, n, 128);
+            Arg(kSmokeTrace, 0, bSmokeHat); Arg(kSmokeTrace, 1, bSmokeBar); Arg(kSmokeTrace, 5, -dt);
+            Run(kSmokeTrace, n, 128);
+            Arg(kSmokeCorrect, 0, bSmoke); Arg(kSmokeCorrect, 1, bSmokeHat); Arg(kSmokeCorrect, 2, bSmokeBar); Arg(kSmokeCorrect, 3, bSmokeNew);
+            Arg(kSmokeCorrect, 4, bUx); Arg(kSmokeCorrect, 5, bUy); Arg(kSmokeCorrect, 6, bFlag); Arg(kSmokeCorrect, 7, dt);
+            Arg(kSmokeCorrect, 8, streaks);
+            Run(kSmokeCorrect, n, 128);
+            IntPtr t = bSmoke; bSmoke = bSmokeNew; bSmokeNew = t;
+        }
+
+        public void ReadSmoke(float[] smoke)
+        {
+            Check(CL.clEnqueueReadBuffer(queue, bSmoke, 1, UIntPtr.Zero, (UIntPtr)(n * 4L), smoke, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
+        }
+
         /// <summary>Summiert die Kräfte der letzten 'steps' Schritte und liest sie zurück.</summary>
         public void ReadForces(int steps, double[] fx, double[] fy, int offset)
         {
@@ -281,9 +310,10 @@ namespace Windkanal
             if (queue != IntPtr.Zero) CL.clFinish(queue);
             Release(ref bufA); Release(ref bufB); Release(ref bFlag); Release(ref bSponge); Release(ref bRho);
             Release(ref bUx); Release(ref bUy); Release(ref bSlot); Release(ref bCell); Release(ref bForce); Release(ref bList);
-            foreach (var k in new[] { kStep, kBound, kReduce, kReset, kSetEq, kKick })
+            Release(ref bSmoke); Release(ref bSmokeHat); Release(ref bSmokeBar); Release(ref bSmokeNew);
+            foreach (var k in new[] { kStep, kBound, kReduce, kReset, kSetEq, kKick, kSmokeTrace, kSmokeCorrect, kSmokeClear })
                 if (k != IntPtr.Zero) CL.clReleaseKernel(k);
-            kStep = kBound = kReduce = kReset = kSetEq = kKick = IntPtr.Zero;
+            kStep = kBound = kReduce = kReset = kSetEq = kKick = kSmokeTrace = kSmokeCorrect = kSmokeClear = IntPtr.Zero;
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
             program = IntPtr.Zero;
         }
@@ -517,6 +547,65 @@ __kernel void lbm_kick(__global float* src, __global const uchar* flag, __global
         src[i * N + c] += W[i] * rho * ((cu1 + 0.5f * cu1 * cu1 - us1) - (cu0 + 0.5f * cu0 * cu0 - us0));
     }
     uyA[c] = uy1;
+}
+
+// ---- Rauch: semi-Lagrange mit MacCormack-Korrektur (wie Solver.AdvectSmoke) ----
+
+float bilin(__global const float* a, float x, float y)
+{
+    x = clamp(x, 0.0f, (float)NX - 1.001f);
+    y = clamp(y, 0.0f, (float)NY - 1.001f);
+    int x0 = (int)x, y0 = (int)y;
+    float fx = x - (float)x0, fy = y - (float)y0;
+    int c = y0 * NX + x0;
+    return (a[c] * (1.0f - fx) + a[c + 1] * fx) * (1.0f - fy) + (a[c + NX] * (1.0f - fx) + a[c + NX + 1] * fx) * fy;
+}
+
+float2 back_trace(int x, int y, float dt, __global const float* ux, __global const float* uy)
+{
+    int c = y * NX + x;
+    float mx = (float)x - 0.5f * dt * ux[c], my = (float)y - 0.5f * dt * uy[c];
+    return (float2)((float)x - dt * bilin(ux, mx, my), (float)y - dt * bilin(uy, mx, my));
+}
+
+__kernel void smoke_trace(__global const float* src, __global float* dst, __global const float* ux, __global const float* uy,
+                          __global const uchar* flag, float dt)
+{
+    int c = get_global_id(0);
+    if (c >= N) return;
+    if (flag[c] == SOLID) { dst[c] = 0.0f; return; }
+    float2 b = back_trace(c % NX, c / NX, dt, ux, uy);
+    dst[c] = bilin(src, b.x, b.y);
+}
+
+__kernel void smoke_correct(__global const float* phi, __global const float* hat, __global const float* bar, __global float* dst,
+                            __global const float* ux, __global const float* uy, __global const uchar* flag, float dt, int streaks)
+{
+    int c = get_global_id(0);
+    if (c >= N) return;
+    int x = c % NX, y = c / NX;
+    if (flag[c] == SOLID) { dst[c] = 0.0f; return; }
+    if (x <= 1)
+    {
+        float s = (float)NY / (float)streaks;
+        float f = (float)y / s - 0.5f;
+        float d = fabs(f - round(f)) * s;
+        dst[c] = clamp(1.6f - d / 1.1f, 0.0f, 1.0f);
+        return;
+    }
+    float2 b = back_trace(x, y, dt, ux, uy);
+    float bx = clamp(b.x, 0.0f, (float)NX - 1.001f), by = clamp(b.y, 0.0f, (float)NY - 1.001f);
+    int k = (int)by * NX + (int)bx;
+    float lo = fmin(fmin(phi[k], phi[k + 1]), fmin(phi[k + NX], phi[k + NX + 1]));
+    float hi = fmax(fmax(phi[k], phi[k + 1]), fmax(phi[k + NX], phi[k + NX + 1]));
+    float v = hat[c] + 0.5f * (phi[c] - bar[c]);
+    dst[c] = clamp(v, lo, hi);
+}
+
+__kernel void smoke_clear(__global float* a)
+{
+    int c = get_global_id(0);
+    if (c < N) a[c] = 0.0f;
 }
 ";
     }

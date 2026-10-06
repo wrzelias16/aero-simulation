@@ -42,6 +42,15 @@ namespace Windkanal
         /// <summary>Kraft auf den Körper im letzten Zeitschritt (Gittereinheiten).</summary>
         public double Fx, Fy;
 
+        /// <summary>
+        /// Rauchdichte 0..1 je Zelle für die Rauchansicht. Ein Rechen am Einlass gibt dünne Rauchfäden ab,
+        /// die mit der Strömung mitgeführt werden (siehe <see cref="AdvectSmoke"/>).
+        /// Auf der GPU erst nach <see cref="ReadSmoke"/> aktuell.
+        /// </summary>
+        public readonly float[] Smoke;
+        float[] smokeHat, smokeBar, smokeNew;
+        bool smokeStale;
+
         GpuLbm gpu;
         readonly double[] batchFx = new double[GpuLbm.MaxBatch], batchFy = new double[GpuLbm.MaxBatch];
         /// <summary>Womit gerechnet wird, z. B. "GPU (NVIDIA GeForce RTX 5070 Ti)" oder "CPU (20 Kerne)".</summary>
@@ -72,6 +81,7 @@ namespace Windkanal
             string reason;
             if (Environment.GetEnvironmentVariable("WK_CPU") == "1") reason = "per WK_CPU=1 abgeschaltet";
             else gpu = GpuLbm.TryCreate(nx, ny, sponge, out reason);
+            Smoke = new float[N];
             if (gpu != null) Backend = "GPU (" + GpuLbm.DeviceName + ")";
             else
             {
@@ -79,6 +89,9 @@ namespace Windkanal
                 Backend = "CPU (" + Environment.ProcessorCount + " Kerne)";
                 fSrc = new float[9 * N];
                 fDst = new float[9 * N];
+                smokeHat = new float[N];
+                smokeBar = new float[N];
+                smokeNew = new float[N];
             }
             RebuildFlags();
             Reset();
@@ -125,8 +138,10 @@ namespace Windkanal
             {
                 if (gpu == null) SetEquilibrium(c, 1f, 0f, 0f);
                 Rho[c] = 1f; Ux[c] = 0f; Uy[c] = 0f;
+                Smoke[c] = 0f;
             }
             if (gpu != null) gpu.Reset();
+            smokeStale = false;
         }
 
         /// <summary>
@@ -462,6 +477,108 @@ namespace Windkanal
                 }
             }
             rowFx[y] = fxs; rowFy[y] = fys;
+        }
+
+        // ------------------------------------------------------------ Rauch
+
+        /// <summary>Anzahl der Rauchfäden am Einlass.</summary>
+        public int SmokeStreaks { get { return Math.Max(16, NY / 9); } }
+
+        /// <summary>
+        /// Führt die Rauchdichte mit der aktuellen Strömung um 'steps' Zeitschritte weiter.
+        /// Verfahren: semi-Lagrange (Rückverfolgung entlang der Geschwindigkeit) mit MacCormack-Korrektur,
+        /// damit die Rauchfäden scharf bleiben statt zu verschmieren. Pro Teilschritt wandert der Rauch
+        /// höchstens gut eine Zelle weit.
+        /// </summary>
+        public void AdvectSmoke(int steps)
+        {
+            if (steps <= 0) return;
+            float speed = 2f * Math.Max(U0, 1e-3f);
+            int subs = Math.Max(1, (int)Math.Ceiling(steps * speed / 1.2f));
+            float dt = steps / (float)subs;
+            int streaks = SmokeStreaks;
+            if (gpu != null)
+            {
+                for (int k = 0; k < subs; k++) gpu.EnqueueSmoke(dt, streaks);
+                smokeStale = true;
+                return;
+            }
+            for (int k = 0; k < subs; k++)
+            {
+                float[] phi = Smoke, hat = smokeHat, bar = smokeBar, nw = smokeNew;
+                Parallel.For(0, NY, y => SmokeTrace(y, phi, hat, dt));
+                Parallel.For(0, NY, y => SmokeTrace(y, hat, bar, -dt));
+                Parallel.For(0, NY, y => SmokeCorrect(y, phi, hat, bar, nw, dt, streaks));
+                Array.Copy(nw, Smoke, N);
+            }
+        }
+
+        /// <summary>Holt die Rauchdichte von der Grafikkarte (auf der CPU ohne Wirkung).</summary>
+        public void ReadSmoke()
+        {
+            if (gpu == null || !smokeStale) return;
+            gpu.ReadSmoke(Smoke);
+            smokeStale = false;
+        }
+
+        /// <summary>Dichte eines Rauchfadens am Einlass: weiches Profil, gut eine Zelle breit.</summary>
+        public static float SmokeInlet(int y, int ny, int streaks)
+        {
+            float s = ny / (float)streaks;
+            float f = y / s - 0.5f;
+            float d = Math.Abs(f - (float)Math.Round(f)) * s;
+            return Math.Max(0f, Math.Min(1f, 1.6f - d / 1.1f));
+        }
+
+        static float Bilinear(float[] a, float x, float y, int nx, int ny)
+        {
+            if (x < 0) x = 0; if (x > nx - 1.001f) x = nx - 1.001f;
+            if (y < 0) y = 0; if (y > ny - 1.001f) y = ny - 1.001f;
+            int x0 = (int)x, y0 = (int)y;
+            float fx = x - x0, fy = y - y0;
+            int c = y0 * nx + x0;
+            return (a[c] * (1 - fx) + a[c + 1] * fx) * (1 - fy) + (a[c + nx] * (1 - fx) + a[c + nx + 1] * fx) * fy;
+        }
+
+        /// <summary>Rückverfolgung (Mittelpunktregel) um dt; negatives dt verfolgt vorwärts.</summary>
+        void BackTrace(int x, int y, float dt, out float bx, out float by)
+        {
+            int c = y * NX + x;
+            float mx = x - 0.5f * dt * Ux[c], my = y - 0.5f * dt * Uy[c];
+            bx = x - dt * Bilinear(Ux, mx, my, NX, NY);
+            by = y - dt * Bilinear(Uy, mx, my, NX, NY);
+        }
+
+        void SmokeTrace(int y, float[] src, float[] dst, float dt)
+        {
+            for (int x = 0; x < NX; x++)
+            {
+                int c = y * NX + x;
+                if (Solid[c]) { dst[c] = 0f; continue; }
+                float bx, by;
+                BackTrace(x, y, dt, out bx, out by);
+                dst[c] = Bilinear(src, bx, by, NX, NY);
+            }
+        }
+
+        void SmokeCorrect(int y, float[] phi, float[] hat, float[] bar, float[] dst, float dt, int streaks)
+        {
+            float inlet = SmokeInlet(y, NY, streaks);
+            for (int x = 0; x < NX; x++)
+            {
+                int c = y * NX + x;
+                if (Solid[c]) { dst[c] = 0f; continue; }
+                if (x <= 1) { dst[c] = inlet; continue; }
+                float bx, by;
+                BackTrace(x, y, dt, out bx, out by);
+                if (bx < 0) bx = 0; if (bx > NX - 1.001f) bx = NX - 1.001f;
+                if (by < 0) by = 0; if (by > NY - 1.001f) by = NY - 1.001f;
+                int b = (int)by * NX + (int)bx;
+                float lo = Math.Min(Math.Min(phi[b], phi[b + 1]), Math.Min(phi[b + NX], phi[b + NX + 1]));
+                float hi = Math.Max(Math.Max(phi[b], phi[b + 1]), Math.Max(phi[b + NX], phi[b + NX + 1]));
+                float v = hat[c] + 0.5f * (phi[c] - bar[c]);
+                dst[c] = v < lo ? lo : v > hi ? hi : v;
+            }
         }
 
         /// <summary>Freistromdichte (am Einlass gemessen) als Druckreferenz.</summary>
