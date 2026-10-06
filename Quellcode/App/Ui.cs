@@ -9,25 +9,101 @@ using System.Windows.Forms;
 
 namespace Windkanal
 {
-    /// <summary>Farben, Schriften und Zeichenhilfen für das dunkle Design.</summary>
+    /// <summary>Farben, Schriften und Zeichenhilfen für das helle und das dunkle Design.</summary>
     static class Theme
     {
-        public static readonly Color Bg = Color.FromArgb(18, 21, 26);       // = Hintergrund des Strömungsbilds
-        public static readonly Color Chrome = Color.FromArgb(22, 25, 31);   // Kopf-, Seiten- und Fußleiste
-        public static readonly Color Card = Color.FromArgb(30, 34, 42);
-        public static readonly Color Ctl = Color.FromArgb(40, 45, 55);
-        public static readonly Color CtlHover = Color.FromArgb(50, 56, 68);
-        public static readonly Color Border = Color.FromArgb(48, 54, 65);
-        public static readonly Color Track = Color.FromArgb(55, 61, 74);
-        public static readonly Color Text = Color.FromArgb(230, 233, 238);
-        public static readonly Color Muted = Color.FromArgb(140, 148, 162);
-        public static readonly Color Faint = Color.FromArgb(95, 102, 116);
-        public static readonly Color Accent = Color.FromArgb(77, 163, 255);
-        public static readonly Color AccentHover = Color.FromArgb(104, 178, 255);
-        public static readonly Color Good = Color.FromArgb(80, 210, 140);
-        public static readonly Color Warn = Color.FromArgb(255, 196, 87);
-        public static readonly Color Cd = Color.FromArgb(255, 159, 67);
-        public static readonly Color Cl = Color.FromArgb(84, 200, 255);
+        public static bool Dark = true;
+        public static Color Bg, Chrome, Card, Ctl, CtlHover, Border, Track, Text, Muted, Faint,
+                            Accent, AccentHover, OnAccent, Good, Warn, Cd, Cl, Grid, Zero;
+
+        static Theme() { Apply(LoadDark()); }
+
+        static Color C(int r, int g, int b) { return Color.FromArgb(r, g, b); }
+
+        public static void Apply(bool dark)
+        {
+            Dark = dark;
+            if (dark)
+            {
+                Bg = C(18, 21, 26); Chrome = C(22, 25, 31); Card = C(30, 34, 42);
+                Ctl = C(40, 45, 55); CtlHover = C(50, 56, 68); Border = C(48, 54, 65); Track = C(55, 61, 74);
+                Text = C(230, 233, 238); Muted = C(140, 148, 162); Faint = C(95, 102, 116);
+                Accent = C(77, 163, 255); AccentHover = C(104, 178, 255); OnAccent = C(10, 18, 30);
+                Good = C(80, 210, 140); Warn = C(255, 196, 87); Cd = C(255, 159, 67); Cl = C(84, 200, 255);
+                Grid = C(44, 50, 60); Zero = C(80, 88, 102);
+            }
+            else
+            {
+                Bg = C(233, 236, 241); Chrome = C(246, 247, 249); Card = C(255, 255, 255);
+                Ctl = C(238, 241, 245); CtlHover = C(225, 230, 237); Border = C(220, 224, 231); Track = C(212, 217, 225);
+                Text = C(24, 28, 36); Muted = C(92, 100, 114); Faint = C(138, 146, 158);
+                Accent = C(30, 115, 232); AccentHover = C(55, 134, 242); OnAccent = Color.White;
+                Good = C(28, 160, 90); Warn = C(196, 120, 0); Cd = C(232, 118, 18); Cl = C(14, 138, 206);
+                Grid = C(230, 233, 238); Zero = C(186, 192, 202);
+            }
+            Renderer.BgColor = Bg.ToArgb();
+        }
+
+        // Gewähltes Design merken (HKCU\Software\Windkanal2D, Wert "Design")
+        const string PrefKey = @"Software\Windkanal2D";
+
+        static bool LoadDark()
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(PrefKey))
+                {
+                    var v = k != null ? k.GetValue("Design") as string : null;
+                    if (v == "hell") return false;
+                    if (v == "dunkel") return true;
+                }
+                // sonst der Windows-Einstellung folgen (Apps: hell/dunkel)
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                {
+                    var v = k != null ? k.GetValue("AppsUseLightTheme") : null;
+                    if (v is int) return (int)v == 0;
+                }
+            }
+            catch { }
+            return true;
+        }
+
+        public static void SaveDark(bool dark)
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(PrefKey))
+                    k.SetValue("Design", dark ? "dunkel" : "hell");
+            }
+            catch { }
+        }
+
+        /// <summary>App-Logo: Stromlinien um einen Kreis auf dunkelblauem Grund.</summary>
+        public static void DrawLogo(Graphics g, float lx, float ly, float s, float phase = 0)
+        {
+            using (var bg = new LinearGradientBrush(new RectangleF(lx, ly, s, s), C(30, 48, 84), C(14, 20, 34), 90f))
+            using (var path = Round(new RectangleF(lx, ly, s, s), s * 0.25f))
+                g.FillPath(bg, path);
+            Color[] cols = { C(84, 200, 255), C(106, 253, 98), C(255, 159, 67) };
+            float cx = lx + s * 0.44f, cy = ly + s * 0.5f;
+            for (int i = 0; i < 3; i++)
+                using (var pen = new Pen(cols[i], Math.Max(1.4f, s * 0.05f)))
+                    foreach (int sgn in new[] { -1, 1 })
+                    {
+                        var pts = new PointF[25];
+                        for (int k = 0; k < pts.Length; k++)
+                        {
+                            float x = lx + s * (0.1f + 0.8f * k / (pts.Length - 1));
+                            float d = (x - cx) / (s * 0.19f);
+                            float wave = phase != 0 ? s * 0.012f * (i + 1) * (float)Math.Sin(phase * 2 + k * 0.5 + i) * Math.Max(0, (x - cx) / s) * 3 : 0;
+                            float yy = cy + sgn * s * (0.11f + 0.115f * i) + sgn * s * (0.16f - 0.035f * i) * (float)Math.Exp(-d * d) + wave;
+                            pts[k] = new PointF(x, yy);
+                        }
+                        g.DrawLines(pen, pts);
+                    }
+            float r = s * 0.13f;
+            using (var b = new SolidBrush(C(232, 235, 240))) g.FillEllipse(b, cx - r, cy - r, 2 * r, 2 * r);
+        }
 
         public static readonly Font Base = new Font("Segoe UI", 9f);
         public static readonly Font Small = new Font("Segoe UI", 8.25f);
@@ -90,10 +166,10 @@ namespace Windkanal
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
         static extern int SetWindowTheme(IntPtr hwnd, string app, string idList);
 
-        /// <summary>Dunkle Titelleiste (Windows 10 ab 1809 und Windows 11).</summary>
+        /// <summary>Titelleiste passend zum Design (dunkel: Windows 10 ab 1809 und Windows 11).</summary>
         public static void DarkTitleBar(IntPtr hwnd)
         {
-            int on = 1;
+            int on = Dark ? 1 : 0;
             try
             {
                 if (DwmSetWindowAttribute(hwnd, 20, ref on, 4) != 0)
@@ -102,10 +178,25 @@ namespace Windkanal
             catch { }
         }
 
-        /// <summary>Dunkle Bildlaufleisten für ein Fenster.</summary>
+        [DllImport("user32.dll")]
+        static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
+
+        /// <summary>Titelleiste nach einem Designwechsel neu zeichnen lassen.</summary>
+        public static void RefreshFrame(Form f)
+        {
+            try
+            {
+                bool active = Form.ActiveForm == f;
+                SendMessage(f.Handle, 0x86, active ? IntPtr.Zero : (IntPtr)1, IntPtr.Zero);   // WM_NCACTIVATE
+                SendMessage(f.Handle, 0x86, active ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        /// <summary>Bildlaufleisten passend zum Design.</summary>
         public static void DarkScrollbars(IntPtr hwnd)
         {
-            try { SetWindowTheme(hwnd, "DarkMode_Explorer", null); } catch { }
+            try { SetWindowTheme(hwnd, Dark ? "DarkMode_Explorer" : "Explorer", null); } catch { }
         }
     }
 
@@ -163,7 +254,7 @@ namespace Windkanal
             if (Pressed) fill = Theme.Mix(fill, Color.Black, 0.15f);
             if (!Enabled) fill = Theme.Mix(fill, BackColor, 0.5f);
             Theme.FillRound(g, fill, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), 6);
-            Color fg = Primary ? Color.FromArgb(10, 18, 30) : Theme.Text;
+            Color fg = Primary ? Theme.OnAccent : Theme.Text;
             if (!Enabled) fg = Theme.Faint;
 
             Size ts = TextRenderer.MeasureText(g, Text, Font, Size, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
@@ -265,7 +356,8 @@ namespace Windkanal
             float r = Pressed || Hover ? 8 : 7;
             if (Focused && Enabled)
                 using (var halo = new SolidBrush(Color.FromArgb(60, Theme.Accent))) g.FillEllipse(halo, xt - r - 4, TrackY - r - 4, 2 * r + 8, 2 * r + 8);
-            using (var b = new SolidBrush(Enabled ? Theme.Text : Theme.Muted)) g.FillEllipse(b, xt - r, TrackY - r, 2 * r, 2 * r);
+            using (var b = new SolidBrush(!Enabled ? Theme.Muted : Theme.Dark ? Theme.Text : Color.White)) g.FillEllipse(b, xt - r, TrackY - r, 2 * r, 2 * r);
+            if (!Theme.Dark) using (var p = new Pen(Theme.Border)) g.DrawEllipse(p, xt - r, TrackY - r, 2 * r, 2 * r);
             using (var b = new SolidBrush(acc)) g.FillEllipse(b, xt - 3, TrackY - 3, 6, 6);
         }
     }
@@ -528,13 +620,12 @@ namespace Windkanal
         {
             SetStyle(ControlStyles.Selectable, false);
             Text = text;
-            ForeColor = Theme.Muted;
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.Clear(BackColor);
-            Theme.Draw(e.Graphics, Text, Font, ForeColor, ClientRectangle, TextFormatFlags.WordBreak);
+            Theme.Draw(e.Graphics, Text, Font, Theme.Muted, ClientRectangle, TextFormatFlags.WordBreak);
         }
     }
 

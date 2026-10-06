@@ -38,7 +38,7 @@ namespace Windkanal
         DropDown cbShape, cbRes, cbView;
         FlatSlider tbAngle, tbSize, tbRe;
         Toggle chkSmoke, chkWalls;
-        FlatButton btnRun, btnReset, btnInfo;
+        FlatButton btnRun, btnReset, btnInfo, btnTheme;
         NumberBox numMeters;
         InfoRows rowsGeo, rowsPhys;
         Panel side;
@@ -61,7 +61,10 @@ namespace Windkanal
         PointF lastDraw;
         bool hasLastDraw;
 
-        public MainForm()
+        public MainForm() : this(null) { }
+
+        /// <param name="report">meldet den Ladefortschritt an das Startfenster (Text, 0..1)</param>
+        public MainForm(Action<string, float> report)
         {
             Text = "Windkanal 2D";
             var wa = Screen.PrimaryScreen.WorkingArea;
@@ -74,8 +77,11 @@ namespace Windkanal
             KeyPreview = true;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
+            if (report != null) report("Oberfläche wird aufgebaut …", 0.2f);
             BuildUi();
+            if (report != null) report("Grafikkarte wird gesucht …", 0.4f);
             CreateSolver();
+            if (report != null) report("Rechengitter wird vorbereitet …", 0.75f);
             RebuildGeometry(true);
 
             timer.Interval = 1;
@@ -115,7 +121,10 @@ namespace Windkanal
             btnRun = new FlatButton { Text = "Pause", Icon = "", Primary = true, BackColor = Theme.Chrome };
             btnReset = new FlatButton { Text = "Neu starten", Icon = "", BackColor = Theme.Chrome };
             btnInfo = new FlatButton { Text = "Physik & Grenzen", Icon = "", BackColor = Theme.Chrome };
-            header.Controls.AddRange(new Control[] { btnRun, btnReset, btnInfo });
+            btnTheme = new FlatButton { Text = "", BackColor = Theme.Chrome };
+            header.Controls.AddRange(new Control[] { btnRun, btnReset, btnInfo, btnTheme });
+            btnTheme.Click += delegate { SwitchTheme(); };
+            UpdateThemeButton();
             btnRun.Click += delegate { SetRunning(!running); };
             btnReset.Click += delegate { ResetFlow(); };
             btnInfo.Click += delegate { ShowInfo(); };
@@ -227,12 +236,53 @@ namespace Windkanal
         void LayoutHeader()
         {
             int h = 34, top = (header.Height - h) / 2, x = header.Width - 16;
-            foreach (var b in new[] { btnRun, btnReset, btnInfo })
+            foreach (var b in new[] { btnRun, btnReset, btnInfo, btnTheme })
             {
-                int w = b == btnRun ? 112 : b == btnReset ? 136 : 170;
+                int w = b == btnRun ? 112 : b == btnReset ? 136 : b == btnInfo ? 170 : 34;
                 x -= w;
                 b.SetBounds(x, top, w, h);
                 x -= 8;
+            }
+        }
+
+        readonly ToolTip tips = new ToolTip();
+
+        void UpdateThemeButton()
+        {
+            btnTheme.Icon = Theme.Dark ? "" : "";   // Sonne bzw. Mond
+            if (Theme.Icons == null) btnTheme.Text = Theme.Dark ? "Hell" : "Dunkel";
+            tips.SetToolTip(btnTheme, Theme.Dark ? "Helles Design" : "Dunkles Design");
+            btnTheme.Invalidate();
+        }
+
+        /// <summary>Zwischen hellem und dunklem Design umschalten und die Wahl merken.</summary>
+        void SwitchTheme()
+        {
+            Theme.Apply(!Theme.Dark);
+            Theme.SaveDark(Theme.Dark);
+            SuspendLayout();
+            BackColor = Theme.Bg;
+            ForeColor = Theme.Text;
+            Recolor(this);
+            ResumeLayout();
+            UpdateThemeButton();
+            Theme.DarkTitleBar(Handle);
+            Theme.RefreshFrame(this);
+            Theme.DarkScrollbars(side.Handle);
+            dirty = true;
+            Invalidate(true);
+        }
+
+        void Recolor(Control parent)
+        {
+            foreach (Control c in parent.Controls)
+            {
+                if (c is TextBox) { c.BackColor = Theme.Ctl; c.ForeColor = Theme.Text; }
+                else if (c == view) c.BackColor = Theme.Bg;
+                else if (c.Parent is Card) c.BackColor = Theme.Card;
+                else c.BackColor = Theme.Chrome;
+                if (c is Painted) c.ForeColor = Theme.Text;
+                Recolor(c);
             }
         }
 
@@ -564,26 +614,10 @@ namespace Windkanal
             using (var p = new Pen(Theme.Border)) g.DrawLine(p, 0, r.Height - 1, r.Width, r.Height - 1);
 
             // kleines Logo: Stromlinien um einen Kreis
-            int lx = 18, ly = (r.Height - 32) / 2;
-            Theme.FillRound(g, Theme.Card, new RectangleF(lx, ly, 32, 32), 8);
-            Color[] cols = { Theme.Cl, Color.FromArgb(106, 253, 98), Theme.Cd };
-            for (int i = 0; i < 3; i++)
-                using (var pen = new Pen(cols[i], 1.6f))
-                    foreach (int sgn in new[] { -1, 1 })
-                    {
-                        var pts = new PointF[13];
-                        for (int k = 0; k < pts.Length; k++)
-                        {
-                            float x = lx + 4 + 24f * k / (pts.Length - 1);
-                            float d = (x - (lx + 14)) / 6f;
-                            float yy = ly + 16 + sgn * (4 + 3.6f * i) + sgn * (5 - 1.2f * i) * (float)Math.Exp(-d * d);
-                            pts[k] = new PointF(x, yy);
-                        }
-                        g.DrawLines(pen, pts);
-                    }
-            using (var b = new SolidBrush(Theme.Text)) g.FillEllipse(b, lx + 10, ly + 12, 8, 8);
+            int lx = 18, ly = (r.Height - 34) / 2;
+            Theme.DrawLogo(g, lx, ly, 34);
 
-            int tx = lx + 44;
+            int tx = lx + 46;
             Theme.Draw(g, "Windkanal 2D", Theme.Title, Theme.Text, new Rectangle(tx, 9, 300, 24), TextFormatFlags.Left);
             Theme.Draw(g, "Lattice-Boltzmann-Strömungssimulation", Theme.Small, Theme.Muted, new Rectangle(tx, 34, 300, 18), TextFormatFlags.Left);
 
@@ -620,7 +654,7 @@ namespace Windkanal
             int x0 = view.ClientSize.Width - w - 30, y0 = view.ClientSize.Height - 46;
             if (x0 < 10 || y0 < 10) return;
             Theme.Prepare(g);
-            Theme.FillRound(g, Color.FromArgb(200, 22, 25, 31), new RectangleF(x0 - 14, y0 - 30, w + 28, 64), 10);
+            Theme.FillRound(g, Color.FromArgb(225, Theme.Chrome), new RectangleF(x0 - 14, y0 - 30, w + 28, 64), 10);
             Theme.StrokeRound(g, Color.FromArgb(160, Theme.Border), new RectangleF(x0 - 14, y0 - 30, w + 28, 64), 10);
             using (var bmp = new Bitmap(w, 1))
             {
@@ -699,7 +733,7 @@ namespace Windkanal
             double pad = Math.Max(0.1, (hi - lo) * 0.1);
             lo -= pad; hi += pad;
 
-            using (var grid = new Pen(Color.FromArgb(44, 50, 60)))
+            using (var grid = new Pen(Theme.Grid))
             {
                 for (int i = 0; i <= 4; i++)
                 {
@@ -710,7 +744,7 @@ namespace Windkanal
                                TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
                 }
                 float y0 = (float)(plot.Bottom - (0 - lo) / (hi - lo) * plot.Height);
-                using (var zero = new Pen(Color.FromArgb(80, 88, 102))) g.DrawLine(zero, plot.Left, y0, plot.Right, y0);
+                using (var zero = new Pen(Theme.Zero)) g.DrawLine(zero, plot.Left, y0, plot.Right, y0);
             }
             double spanT = span / T;
             Theme.Draw(g, "← letzte " + F(spanT, "0") + " Zeiteinheiten t·U/L", Theme.Small, Theme.Faint,

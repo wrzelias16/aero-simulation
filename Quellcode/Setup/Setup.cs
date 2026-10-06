@@ -153,6 +153,7 @@ namespace WindkanalSetup
             TryDelete(StartMenuLink);
             TryDelete(DesktopLink);
             Registry.CurrentUser.DeleteSubKeyTree(RegKey, false);
+            Registry.CurrentUser.DeleteSubKeyTree(@"Software\Windkanal2D", false);   // gemerktes Design
 
             string dir = InstallDir;
             if (!Directory.Exists(dir)) return;

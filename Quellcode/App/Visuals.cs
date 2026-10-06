@@ -169,7 +169,7 @@ namespace Windkanal
         readonly int[] lutSpeed, lutPressure, lutVort;
         public float Scale, OffX, OffY;
 
-        static readonly int BgColor = Rgb(18, 21, 26);
+        public static int BgColor = Rgb(18, 21, 26);   // wird vom Design (hell/dunkel) gesetzt
         static readonly int SmokeBg = Rgb(12, 14, 18);
         const int SolidR = 205, SolidG = 209, SolidB = 216;
 
