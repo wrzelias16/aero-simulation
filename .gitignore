@@ -1,0 +1,9 @@
+# Build-Ergebnisse (werden mit Quellcode\build.ps1 neu erzeugt)
+Quellcode/bin/
+*.exe
+*.obj
+*.pdb
+
+# Windows
+Thumbs.db
+Desktop.ini
