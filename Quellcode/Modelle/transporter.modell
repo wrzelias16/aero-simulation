@@ -1,0 +1,34 @@
+# Transporter
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Transporter
+beschreibung: Kastenwagen mit kurzer Haube und senkrechtem Heck.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Abmessungen, kein bestimmtes Fahrzeugmodell
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 45
+winkel: 0
+reynolds: 1000
+boden: ja
+
+teil: Karosserie
+glatt: 5
+punkte:
+  0.01 0.06
+  0 0.1
+  0.005 0.18
+  0.06 0.23
+  0.2 0.33
+  0.26 0.345
+  0.95 0.345
+  0.99 0.335
+  1 0.32 !
+  1 0.08 !
+  0.98 0.055
+  0.9 0.05
+  0.1 0.05
+
+teil: Vorderrad
+kreis: 0.17 0.06 0.06 64
+
+teil: Hinterrad
+kreis: 0.8 0.06 0.06 64

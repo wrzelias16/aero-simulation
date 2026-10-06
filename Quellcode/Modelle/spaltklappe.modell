@@ -1,0 +1,22 @@
+# Flügel mit Spaltklappe
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Flügel mit Spaltklappe
+beschreibung: NACA-2413-Flügel mit 30-%-Spaltklappe (NACA 4415), 25° ausgefahren: Landeanflug.
+quelle: Eigene Konstruktion für Windkanal 2D (Profile nach NACA-Formeln)
+lizenz: Teil dieses Projekts
+bezug: Sehnenlänge
+groesse: 40
+winkel: 5
+reynolds: 1000
+detail: 0.03662
+drehpunkt: 0.25 0
+
+teil: Hauptflügel
+naca: 2413 160
+sehne: 0.78
+
+teil: Klappe
+naca: 4415 120
+sehne: 0.3
+winkel: 25
+lage: 0.69 -0.052

@@ -1,0 +1,18 @@
+# Straßenschlucht
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Straßenschlucht
+beschreibung: Zwei gleich hohe Häuserblöcke mit einer Straße dazwischen (Breite = Höhe): ein Wirbel füllt die Straße.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Gebäudehöhe
+groesse: 30
+winkel: 0
+reynolds: 2000
+boden: ja
+bodenabstand: 0
+
+teil: Block 1
+rechteck: 0 0 1 1
+
+teil: Block 2
+rechteck: 2 0 3 1

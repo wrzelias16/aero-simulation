@@ -1,0 +1,14 @@
+# NASA SC(2)-0612
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NASA SC(2)-0612
+beschreibung: Superkritisch, 12 % dick: flache Oberseite, starke Hinterkanten-Wölbung.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei sc20612.dat, Original unverändert in Modelle/Profile
+lizenz: US-Regierungswerk (NASA), gemeinfrei; Datei aus der UIUC-Datenbank
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: sc20612

@@ -1,0 +1,78 @@
+# Radfahrer in Zeitfahrhaltung
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Radfahrer in Zeitfahrhaltung
+beschreibung: Fahrer auf dem Zeitfahrrad mit Scheibenrad, Aerolenker und Tropfenhelm (Seitenansicht).
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Körpermaßen (Fahrer etwa 1,80 m, Laufrad 700C)
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 50
+winkel: 0
+reynolds: 2000
+detail: 0.01765
+boden: ja
+
+teil: Hinterrad (Scheibe)
+kreis: 0.78824 0.2 0.2 80
+
+teil: Vorderrad
+kreis: 0.21176 0.2 0.2 80
+
+teil: Unterrohr
+stab: 0.31176 0.37647 0.54118 0.17647 0.02941
+
+teil: Oberrohr
+stab: 0.31176 0.41176 0.58824 0.44706 0.02059
+
+teil: Sitzrohr
+stab: 0.58824 0.47059 0.54118 0.17647 0.02941
+
+teil: Gabel
+stab: 0.31176 0.38824 0.21176 0.2 0.02059
+
+teil: Hinterbau
+stab: 0.54118 0.17647 0.78824 0.2 0.01765
+
+teil: Lenker
+stab: 0.31176 0.41176 0.25882 0.54118 0.02059
+
+teil: Rumpf
+glatt: 5
+punkte:
+  0.35294 0.6
+  0.38824 0.64706
+  0.47059 0.67059
+  0.58824 0.66471
+  0.64706 0.63529
+  0.65882 0.57647
+  0.61176 0.52941
+  0.47059 0.55294
+  0.37647 0.55882
+
+teil: Helm
+glatt: 5
+punkte:
+  0.27059 0.64706
+  0.29412 0.69412
+  0.34118 0.71176
+  0.4 0.7
+  0.50588 0.67647 !
+  0.38824 0.63529
+  0.30588 0.61176
+
+teil: Oberarm
+stab: 0.37647 0.58824 0.35294 0.52941 0.05294
+
+teil: Unterarm
+stab: 0.35294 0.52941 0.23529 0.55882 0.04412
+
+teil: Oberschenkel vorn
+stab: 0.6 0.55882 0.45882 0.41176 0.08824
+
+teil: Unterschenkel vorn
+stab: 0.45882 0.41176 0.48824 0.18824 0.05882
+
+teil: Oberschenkel hinten
+stab: 0.61176 0.55882 0.57647 0.36471 0.08824
+
+teil: Unterschenkel hinten
+stab: 0.57647 0.36471 0.62353 0.14118 0.05882

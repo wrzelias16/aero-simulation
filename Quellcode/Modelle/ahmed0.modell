@@ -1,0 +1,19 @@
+# Ahmed-Körper 0° (Kastenheck)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Ahmed-Körper 0° (Kastenheck)
+beschreibung: Ohne Schräge: senkrechtes Heck mit großem Totwasser.
+quelle: Ahmed, Ramm, Faltin: „Some salient features of the time-averaged ground vehicle wake“, SAE 840300 (1984): Länge 1044 mm, Höhe 288 mm, Radius vorn 100 mm, Schräge 222 mm, Bodenabstand 50 mm (Stelzen weggelassen)
+lizenz: Maße aus der Veröffentlichung, Koordinaten selbst berechnet
+bezug: Stirnhöhe
+groesse: 45
+winkel: 0
+reynolds: 2000
+boden: ja
+bodenabstand: 0.04789
+
+teil: Körper
+punkte:
+  bogen 0.09579 0.14368 0.09579 180 270 16
+  1 0.04789 !
+  1 0.32375 !
+  bogen 0.09579 0.22797 0.09579 90 180 16

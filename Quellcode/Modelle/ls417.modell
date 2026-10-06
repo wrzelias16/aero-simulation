@@ -1,0 +1,14 @@
+# NASA LS(1)-0417 / GA(W)-1
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NASA LS(1)-0417 / GA(W)-1
+beschreibung: NASA-Profil für die allgemeine Luftfahrt (1970er), 17 % dick, viel Auftrieb.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei ls417.dat, Original unverändert in Modelle/Profile
+lizenz: US-Regierungswerk (NASA), gemeinfrei; Datei aus der UIUC-Datenbank
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: ls417

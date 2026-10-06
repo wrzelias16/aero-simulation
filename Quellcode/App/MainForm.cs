@@ -26,7 +26,7 @@ namespace Windkanal
         readonly Renderer renderer = new Renderer();
         readonly ForceStats stats = new ForceStats(400000);
 
-        ShapeKind shape = ShapeKind.Zylinder;
+        Model model = ModelLibrary.Find("zylinder") ?? ModelLibrary.All[0];
         bool[] customMask;
         int resIndex = 1, sizePercent = 10, angleDeg = 0;
         double reynolds = 100;
@@ -38,12 +38,14 @@ namespace Windkanal
         Card cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir;
         Canvas view;
         Segmented segView;
-        DropDown cbShape, cbRes;
+        DropDown cbRes;
+        ModelPicker cbShape;
         FlatSlider tbAngle, tbSize, tbRe;
         Toggle chkSmoke, chkWalls;
         FlatButton btnRun, btnReset, btnInfo, btnTheme;
         NumberBox numMeters;
         InfoRows rowsGeo, rowsPhys;
+        HintLabel hintModel;
         readonly ToolTip tips = new ToolTip();
 
         const int Outer = 18, Gap = 14, TopH = 76, RightW = 344, BottomH = 206;
@@ -172,10 +174,10 @@ namespace Windkanal
                 return c;
             };
             add(new Section("Objekt"), 20, 10);
-            cbShape = (DropDown)add(new DropDown(), 40, 12);
-            foreach (var k in Shapes.All) cbShape.Items.Add(Shapes.Name(k));
-            cbShape.SelectedIndex = 0;
-            cbShape.SelectedIndexChanged += OnShapeChanged;
+            cbShape = (ModelPicker)add(new ModelPicker(ModelLibrary.ByCategory()), 48, 4);
+            cbShape.Selected = model;
+            cbShape.SelectedChanged += OnShapeChanged;
+            hintModel = (HintLabel)add(new HintLabel(""), 30, 4);
             tbAngle = (FlatSlider)add(new FlatSlider { Text = "Anstellwinkel", Minimum = -90, Maximum = 90 }, 46, 6);
             tbAngle.ValueChanged += delegate
             {
@@ -188,12 +190,12 @@ namespace Windkanal
                 sizePercent = tbSize.Value; UpdateSliderLabels();
                 if (!suppress) RebuildGeometry(false);
             };
-            rowsGeo = (InfoRows)add(new InfoRows(), 2 * InfoRows.Row, 10);
-            var btnClear = (FlatButton)add(new FlatButton { Text = "Leere Fläche zum Zeichnen", Icon = "" }, 40, 22);
+            rowsGeo = (InfoRows)add(new InfoRows(), 3 * InfoRows.Row, 10);
+            var btnClear = (FlatButton)add(new FlatButton { Text = "Leere Fläche zum Zeichnen", Icon = "" }, 40, 14);
             btnClear.Click += delegate
             {
                 customMask = new bool[solver.N];
-                SelectShape(ShapeKind.Eigene);
+                SelectShape(ModelLibrary.Custom());
                 RebuildGeometry(true);
             };
 
@@ -239,6 +241,7 @@ namespace Windkanal
             Controls.AddRange(new Control[] { cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir });
             ResumeLayout();
             LayoutAll();
+            UpdateModelHint();
             UpdateSliderLabels();
         }
 
@@ -353,40 +356,55 @@ namespace Windkanal
             tbAngle.ValueText = angleDeg + "°";
             tbSize.ValueText = sizePercent + " %";
             tbRe.ValueText = reynolds.ToString("#,0", De);
-            bool custom = shape == ShapeKind.Eigene;
+            bool custom = model.IsCustom;
             tbAngle.Enabled = !custom;
             tbSize.Enabled = !custom;
         }
 
-        void SelectShape(ShapeKind k)
+        void SelectShape(Model m)
         {
             suppress = true;
-            shape = k;
-            cbShape.SelectedIndex = Array.IndexOf(Shapes.All, k);
+            model = m;
+            cbShape.Selected = m;
             suppress = false;
+            UpdateModelHint();
             UpdateSliderLabels();
+        }
+
+        /// <summary>Kurzbeschreibung des Modells unter der Auswahl; Quelle und Lizenz im Tooltip.</summary>
+        void UpdateModelHint()
+        {
+            if (hintModel == null) return;
+            hintModel.Text = model.IsCustom ? "Mit der Maus ins Strömungsbild zeichnen." : model.Description;
+            hintModel.Invalidate();
+            string tip = model.IsCustom ? "" : model.Name + "\n" + model.Description + "\n\nQuelle: " + model.Source
+                + (model.License.Length > 0 ? "\nLizenz: " + model.License : "");
+            tips.SetToolTip(hintModel, tip);
+            tips.SetToolTip(cbShape, tip);
         }
 
         void OnShapeChanged(object sender, EventArgs e)
         {
             if (suppress) return;
-            var k = Shapes.All[cbShape.SelectedIndex];
-            if (k == ShapeKind.Eigene)
+            var k = cbShape.Selected;
+            if (k.IsCustom)
             {
                 // aktuelle Form als Ausgangspunkt zum Weiterzeichnen übernehmen
                 customMask = (bool[])solver.Solid.Clone();
-                shape = k;
+                model = k;
+                UpdateModelHint();
                 UpdateSliderLabels();
                 RebuildGeometry(false);
                 return;
             }
-            shape = k;
+            model = k;
+            UpdateModelHint();
             suppress = true;
-            sizePercent = Shapes.DefaultSizePercent(k);
+            sizePercent = Math.Max(tbSize.Minimum, Math.Min(tbSize.Maximum, k.SizePercent));
             tbSize.Value = sizePercent;
-            angleDeg = Shapes.DefaultAngle(k);
+            angleDeg = k.Angle;
             tbAngle.Value = angleDeg;
-            reynolds = Shapes.DefaultReynolds(k);
+            reynolds = k.Reynolds;
             tbRe.Value = ReToSlider(reynolds);
             reynolds = SliderToRe(tbRe.Value);
             suppress = false;
@@ -425,7 +443,7 @@ namespace Windkanal
             particles = new Particles(solver.NX, solver.NY);
 
             // eigene Zeichnung auf das neue Gitter übertragen
-            if (shape == ShapeKind.Eigene && oldMask != null)
+            if (model.IsCustom && oldMask != null)
             {
                 customMask = new bool[solver.N];
                 for (int y = 0; y < solver.NY; y++)
@@ -442,27 +460,15 @@ namespace Windkanal
             int nx = solver.NX, ny = solver.NY;
             var mask = new bool[nx * ny];
             float sizeCells = sizePercent / 100f * ny;
-            if (shape == ShapeKind.Eigene)
+            if (model.IsCustom)
             {
                 if (customMask != null && customMask.Length == mask.Length) Array.Copy(customMask, mask, mask.Length);
             }
             else
             {
-                bool vehicle = Shapes.IsVehicle(shape);
-                float px = (vehicle ? 0.3f : 0.25f) * solver.VisibleNX;
-                float py = (ny - 1) / 2f;
-                var parts = Shapes.TransformParts(Shapes.Parts(shape), sizeCells, angleDeg, px, py);
-                if (vehicle)
-                {
-                    // Fahrzeug knapp über dem (reibungsfreien = mitbewegten) Boden platzieren
-                    float minY = float.MaxValue;
-                    foreach (var pts in parts)
-                        foreach (var p in pts) minY = Math.Min(minY, p.Y);
-                    float shift = 3f - minY;
-                    foreach (var pts in parts)
-                        for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(pts[i].X, pts[i].Y + shift);
-                }
-                foreach (var pts in parts) Shapes.Fill(pts, mask, nx, ny);
+                // Fahrzeuge und Bauwerke stehen am (reibungsfreien = mitbewegten) Boden, alles andere mittig im Kanal
+                float px = (model.OnGround ? 0.3f : 0.25f) * solver.VisibleNX;
+                mask = ModelLibrary.Rasterize(model, nx, ny, px, sizeCells, angleDeg);
             }
 
             int rows = 0;
@@ -470,7 +476,7 @@ namespace Windkanal
                 for (int x = 2; x < nx - 2; x++)
                     if (mask[y * nx + x]) { rows++; break; }
             frontalCells = rows;
-            refLen = Shapes.RefIsSize(shape) ? sizeCells : Math.Max(rows, 0);
+            refLen = model.RefIsSize ? sizeCells : Math.Max(rows, 0);
             if (refLen < 2) refLen = 0.1f * ny;
 
             solver.ApplyMask(mask);
@@ -595,8 +601,13 @@ namespace Windkanal
             tLd = settled && Math.Abs(meanCd) > 1e-3 ? F(meanCl / meanCd, "0.0") : "–";
             tSt = settled && freq > 0 ? F(freq * T, "0.000") : "–";
 
-            rowsGeo.Set(new[] { "Versperrung", "Bezugslänge" },
-                        new[] { F(100.0 * frontalCells / solver.NY, "0.0") + " %", F(refLen, "0") + " Zellen (" + Shapes.RefName(shape) + ")" });
+            // feinstes Detail (dünnstes Teil, engster Spalt) in Zellen: unter 2 Zellen erfasst das Gitter es nur grob
+            float detailCells = model.Detail * sizePercent / 100f * solver.NY;
+            bool coarse = model.Detail > 0 && detailCells < 2;
+            rowsGeo.Set(new[] { "Versperrung", "Bezugslänge", "Feinstes Detail" },
+                        new[] { F(100.0 * frontalCells / solver.NY, "0.0") + " %", F(refLen, "0") + " Zellen (" + model.RefName + ")",
+                                model.Detail > 0 ? F(detailCells, "0.0") + " Zellen" + (coarse ? " · Auflösung erhöhen" : "") : "–" });
+            rowsGeo.WarnRow = coarse ? 2 : -1;
 
             double Lm = (double)numMeters.Value;
             double v = reynolds * NuAir / Lm;
@@ -899,10 +910,10 @@ namespace Windkanal
         void PaintAt(Point p)
         {
             var g = renderer.ToGrid(solver, p.X, p.Y);
-            if (shape != ShapeKind.Eigene)
+            if (!model.IsCustom)
             {
                 customMask = (bool[])solver.Solid.Clone();
-                SelectShape(ShapeKind.Eigene);
+                SelectShape(ModelLibrary.Custom());
             }
             if (customMask == null || customMask.Length != solver.N) customMask = new bool[solver.N];
 

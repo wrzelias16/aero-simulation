@@ -1,0 +1,15 @@
+# Hochhaus
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Hochhaus
+beschreibung: Scharfkantiges Hochhaus, dreimal so hoch wie breit, steht auf dem Boden.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Gebäudehöhe
+groesse: 45
+winkel: 0
+reynolds: 2000
+boden: ja
+bodenabstand: 0
+
+teil: Gebäude
+rechteck: 0 0 0.33 1

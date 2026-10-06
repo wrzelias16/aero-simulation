@@ -1,0 +1,13 @@
+# Flache Platte
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Flache Platte
+beschreibung: Dünne Platte (5 % dick); quer gestellt hoher Widerstand, längs fast keiner.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Sehnenlänge
+groesse: 20
+winkel: 0
+reynolds: 1000
+
+teil: Platte
+rechteck: -0.5 -0.025 0.5 0.025

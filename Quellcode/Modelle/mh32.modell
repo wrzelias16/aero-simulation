@@ -1,0 +1,14 @@
+# Hepperle MH 32
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Hepperle MH 32
+beschreibung: Dünnes Profil (8,7 %) für schnelle Segelflugmodelle (F3B) von Martin Hepperle.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei mh32.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: mh32

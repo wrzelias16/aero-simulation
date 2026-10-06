@@ -1,0 +1,22 @@
+# NACA 4412 mit Gurney-Klappe
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NACA 4412 mit Gurney-Klappe
+beschreibung: Winzige Abrisskante (2 % der Sehne) an der Hinterkante: mehr Auftrieb, bekannt aus dem Rennsport (Dan Gurney).
+quelle: NACA-Formeln aus Abbott/von Doenhoff, „Theory of Wing Sections“ bzw. NACA Report 824 (im Programm berechnet)
+lizenz: gemeinfrei (NACA, US-Regierungswerk)
+bezug: Sehnenlänge
+groesse: 30
+winkel: 4
+reynolds: 1000
+detail: 0.02
+drehpunkt: 0.25 0
+
+teil: Profil
+naca: 4412 160
+
+teil: Gurney-Klappe
+punkte:
+  0.996 0 !
+  1.004 0 !
+  1.004 -0.02 !
+  0.996 -0.02 !

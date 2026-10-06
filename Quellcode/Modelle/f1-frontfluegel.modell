@@ -1,0 +1,41 @@
+# Frontflügel (4 Elemente)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Frontflügel (4 Elemente)
+beschreibung: Mehrteiliger Frontflügel im Bodeneffekt: Hauptblatt und drei Flaps, umgedreht für Abtrieb, Spalte 2 % der Tiefe (etwa 12 mm).
+quelle: Elemente: Selig S1223 (UIUC-Datenbank, s1223.dat), umgedreht; Anordnung Eigene Konstruktion für Windkanal 2D nach typischen Maßen (Reglement 2022–2025)
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Flügeltiefe
+groesse: 40
+winkel: 0
+reynolds: 1000
+detail: 0.02
+boden: ja
+bezug-ist-groesse: ja
+bodenabstand: 0.12
+
+teil: Hauptblatt
+profil: s1223
+sehne: 0.42
+winkel: -3
+spiegeln: ja
+
+teil: Flap 1
+profil: s1223
+sehne: 0.26
+winkel: -13
+lage: 0.38947 0.06087
+spiegeln: ja
+
+teil: Flap 2
+profil: s1223
+sehne: 0.21
+winkel: -23
+lage: 0.61357 0.14979
+spiegeln: ja
+
+teil: Flap 3
+profil: s1223
+sehne: 0.18
+winkel: -33
+lage: 0.78386 0.25697
+spiegeln: ja

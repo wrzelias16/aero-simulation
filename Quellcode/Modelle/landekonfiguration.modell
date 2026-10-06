@@ -1,0 +1,28 @@
+# Dreiteiliger Landeflügel (Vorflügel, Klappe)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Dreiteiliger Landeflügel (Vorflügel, Klappe)
+beschreibung: Verkehrsflugzeug im Landeanflug: Vorflügel 30°, Hauptflügel, Fowler-Klappe 30°, Spalte nach Vorbild des NASA-Messfalls 30P30N.
+quelle: Hauptflügel: NASA SC(2)-0612 (UIUC-Datenbank); Vorflügel NACA 6412 und Klappe NACA 4412 (Formeln). Winkel und Spalte nach dem Messfall 30P30N (AIAA High Lift Prediction Workshop), Elemente vereinfacht
+lizenz: US-Regierungswerk (NASA), gemeinfrei; Datei aus der UIUC-Datenbank, Anordnung Eigene Konstruktion für Windkanal 2D
+bezug: Sehnenlänge
+groesse: 42
+winkel: 8
+reynolds: 1000
+detail: 0.0237
+drehpunkt: 0.25 0
+
+teil: Vorflügel
+naca: 6412 100
+sehne: 0.15
+winkel: -30
+lage: -0.115 -0.02164
+
+teil: Hauptflügel
+profil: sc20612
+sehne: 0.84
+
+teil: Klappe
+naca: 4412 120
+sehne: 0.3
+winkel: 30
+lage: 0.73 -0.03

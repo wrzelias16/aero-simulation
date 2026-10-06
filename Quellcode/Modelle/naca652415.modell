@@ -1,0 +1,14 @@
+# NACA 65(2)-415 (Laminarprofil)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NACA 65(2)-415 (Laminarprofil)
+beschreibung: Laminarprofil der Sechser-Reihe, auch in Verdichtergittern verbreitet.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei naca652415.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: naca652415

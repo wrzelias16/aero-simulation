@@ -1,0 +1,27 @@
+# Auto (einfaches Seitenprofil)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Auto (einfaches Seitenprofil)
+beschreibung: Grobe Limousine aus 13 Punkten, ohne Räder.
+quelle: Eigene Konstruktion für Windkanal 2D
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 45
+winkel: 0
+reynolds: 5000
+boden: ja
+
+teil: Karosserie
+punkte:
+  0 0.08
+  0 0.14
+  0.02 0.17
+  0.08 0.19
+  0.3 0.21
+  0.45 0.31
+  0.7 0.31
+  0.88 0.24
+  0.98 0.22
+  1 0.18
+  1 0.08
+  0.95 0.04
+  0.05 0.04

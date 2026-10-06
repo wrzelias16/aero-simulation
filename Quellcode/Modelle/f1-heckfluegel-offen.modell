@@ -1,0 +1,24 @@
+# Heckflügel, DRS offen
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Heckflügel, DRS offen
+beschreibung: Die Flap klappt auf (Schlitz 85 mm bei 500 mm Tiefe): Abtrieb und Widerstand sinken, das Auto wird auf der Geraden schneller.
+quelle: Selig S1223 umgedreht (UIUC-Datenbank); Schlitz 85 mm nach FIA-Reglement 2022–2025; Anordnung Eigene Konstruktion für Windkanal 2D
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Flügeltiefe
+groesse: 34
+winkel: 0
+reynolds: 1000
+detail: 0.02
+
+teil: Hauptblatt
+profil: s1223
+sehne: 0.6
+winkel: -6
+spiegeln: ja
+
+teil: Flap (offen)
+profil: s1223
+sehne: 0.42
+winkel: -11.53129
+lage: 0.48134 0.26743
+spiegeln: ja

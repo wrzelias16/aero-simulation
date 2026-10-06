@@ -1,0 +1,83 @@
+# Lkw-Sattelzug aerodynamisch
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Lkw-Sattelzug aerodynamisch
+beschreibung: Mit Dachspoiler, Seitenverkleidung und Heck-Leitblechen („Boat Tail“): deutlich weniger Widerstand.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Abmessungen, kein bestimmtes Fahrzeugmodell (Anbauteile nach üblichen Nachrüstsätzen)
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 58
+winkel: 0
+reynolds: 2000
+detail: 0.00727
+boden: ja
+
+teil: Fahrerhaus
+glatt: 4
+punkte:
+  0 0.02727 !
+  0 0.15758
+  0.00485 0.19697
+  0.01515 0.21818
+  0.13333 0.22424
+  0.13939 0.21818 !
+  0.13939 0.04848 !
+  0.12727 0.02727 !
+
+teil: Dachspoiler
+glatt: 3
+punkte:
+  0.01818 0.21818
+  0.13333 0.22424
+  0.1697 0.24242 !
+  0.17879 0.24242 !
+  0.17879 0.22424 !
+  0.13939 0.20606 !
+
+teil: Rahmen
+punkte:
+  0.03636 0.03333 !
+  0.03636 0.06364 !
+  0.29091 0.06364 !
+  0.29091 0.03333 !
+
+teil: Auflieger
+punkte:
+  0.18182 0.0697 !
+  0.18182 0.24242 !
+  1 0.24242 !
+  1 0.0697 !
+
+teil: Seitenverkleidung
+punkte:
+  0.31515 0.02727 !
+  0.31515 0.0697 !
+  0.73939 0.0697 !
+  0.73939 0.02727 !
+
+teil: Achsaggregat
+punkte:
+  0.75152 0.04242 !
+  0.75152 0.0697 !
+  0.98182 0.0697 !
+  0.98182 0.04242 !
+
+teil: Heckklappe oben
+stab: 1 0.23879 1.04848 0.22606 0.00727
+
+teil: Heckklappe unten
+stab: 1 0.07333 1.04848 0.08606 0.00727
+
+teil: Rad 1
+kreis: 0.07879 0.0303 0.0303 40
+
+teil: Rad 2
+kreis: 0.24242 0.0303 0.0303 40
+
+teil: Rad 3
+kreis: 0.78788 0.0303 0.0303 40
+
+teil: Rad 4
+kreis: 0.86667 0.0303 0.0303 40
+
+teil: Rad 5
+kreis: 0.94545 0.0303 0.0303 40

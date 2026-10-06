@@ -55,8 +55,12 @@ Hardware des Entwicklungs-PCs (zum Vergleich): NVIDIA GTX 1660 Ti (6 GB), 12 log
 ## 2. Was Version 1 kann (fertig)
 
 ### Objekte
-Zylinder, Quadrat, flache Platte, NACA-Tragflächen 0012 / 2412 / 4412, Auto-Seitenprofil (stark vereinfacht),
-und **eigene Formen mit der Maus zeichnen** (linke Taste = Wand, rechte Taste = radieren, Bürstenradius skaliert mit der Auflösung).
+79 Modelle in 9 Kategorien, ausgewählt über ein Menü mit Untermenüs je Kategorie: Grundformen, über 30 Flugzeugprofile mit echten
+Koordinaten (NACA, Clark Y, Selig, Eppler, Wortmann, NASA superkritisch, RAE 2822 u. a.), Klappen und Leitwerk (Spaltklappe,
+dreiteiliger Landeflügel, NLR 7301 mit Klappe, Höhenruder, Gurney-Klappe), Rotor, Propeller und Windkraft, Formel 1 (Frontflügel mit
+4 Elementen, Heckflügel mit DRS zu und offen, Beam Wing, Unterboden mit Diffusor, ganzes Auto), Straßenfahrzeuge, Ahmed-Körper,
+Radfahrer, Segel, Gebäude und Brückenquerschnitte. Jedes Modell ist eine Datei in `Quellcode/Modelle` mit Quelle und Lizenz,
+Übersicht in [Quellcode/Modelle/LIESMICH.md](Quellcode/Modelle/LIESMICH.md). Außerdem **eigene Formen mit der Maus zeichnen** (linke Taste = Wand, rechte Taste = radieren, Bürstenradius skaliert mit der Auflösung).
 Anstellwinkel (-90° bis +90°) und Größe (4 bis 60 % der Tunnelhöhe) sind per Regler einstellbar.
 
 ### Strömung
@@ -333,11 +337,15 @@ Quellcode/
     Splash.cs            Startfenster mit Ladeanimation (eigener Thread, meldet den Ladefortschritt)
     Solver.cs            LBM-Löser (D2Q9, regularisiert, Smagorinsky), Ränder, Kräfte, ChooseU0, Reset/Kick; nutzt die GPU, wenn vorhanden
     GpuLbm.cs            derselbe Löser als OpenCL-Kernel für die Grafikkarte (P/Invoke auf OpenCL.dll)
-    Shapes.cs            Formen (Polygone, NACA-Profil, Auto), Drehen/Skalieren, Rasterung
+    Shapes.cs            Geometrie-Bausteine (Kreis, Rechteck, NACA-Formel, Glättung), Drehen/Skalieren, Rasterung (Fill, FillFine)
+    Models.cs            Lädt die Modelle (Datendateien, eingebettet oder aus „Modelle“ neben der .exe) und rastert sie aufs Gitter
     Visuals.cs           Rauchpartikel, ForceStats (Mittelwerte, Strouhal), Renderer (Farbtabellen, Bild)
   Fonts/                 Schrift Outfit (SIL Open Font License, siehe OFL.txt), wird beim Bauen in die .exe eingebettet
   Setup/Setup.cs         Installer und Deinstallierer in einer Datei
+  Modelle/               alle Modelle als .modell-Dateien, katalog.txt (Reihenfolge), Profile/ (UIUC-Originaldateien),
+                         Werkzeug/ (Python-Skripte, die die Dateien erzeugen), LIESMICH.md (Format, Quellen, Lizenzen)
   Test/ValidationTest.cs Validierung gegen Literaturwerte, Stabilitätstests
+  Test/ModellVorschau.cs prüft alle Modelle und zeichnet, wie sie auf dem Gitter liegen
 ```
 
 **Build-Hinweise**

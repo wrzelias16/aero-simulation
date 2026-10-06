@@ -1,0 +1,21 @@
+# NLR 7301 mit Klappe (Zweielement)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NLR 7301 mit Klappe (Zweielement)
+beschreibung: Superkritischer Flügel mit 32-%-Klappe bei 20° und 2,6 % Spalt, nach dem bekannten NLR-Zweielement-Messfall.
+quelle: Hauptflügel NLR 7301 (UIUC-Datenbank, nlr7301.dat); Klappe vereinfacht als NACA 4415; Spalt und Winkel nach der NLR-7301-Messung (AGARD)
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 36
+winkel: 6
+reynolds: 1000
+detail: 0.026
+drehpunkt: 0.25 0
+
+teil: Hauptflügel
+profil: nlr7301
+
+teil: Klappe
+naca: 4415 120
+sehne: 0.32
+winkel: 20
+lage: 0.947 -0.03838

@@ -1,0 +1,19 @@
+# Brückenquerschnitt Hohlkasten (Großer Belt)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Brückenquerschnitt Hohlkasten (Großer Belt)
+beschreibung: Stromlinienförmiger Hohlkastenträger einer großen Hängebrücke: 31 m breit, 4,4 m hoch, spitze Windnasen.
+quelle: Maße nach öffentlichen Angaben zur Ostbrücke über den Großen Belt (Storebælt, 1998), vereinfacht ohne Geländer
+lizenz: Maße öffentlich, Koordinaten selbst berechnet
+bezug: Brückenbreite
+groesse: 50
+winkel: 0
+reynolds: 1000
+
+teil: Kasten
+punkte:
+  -0.5 0 !
+  -0.39677 0.07097 !
+  0.39677 0.07097 !
+  0.5 0 !
+  0.32258 -0.07097 !
+  -0.32258 -0.07097 !

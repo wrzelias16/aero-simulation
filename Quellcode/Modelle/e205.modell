@@ -1,0 +1,14 @@
+# Eppler E205
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Eppler E205
+beschreibung: Modellflugprofil, 10,5 % dick.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei e205.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: e205

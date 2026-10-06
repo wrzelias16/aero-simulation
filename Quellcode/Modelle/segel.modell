@@ -1,0 +1,18 @@
+# Mast mit Großsegel
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Mast mit Großsegel
+beschreibung: Waagerechter Schnitt durch Mast und Segel (Wölbung 8 %): der Mast stört die Anströmung des Vorlieks.
+quelle: Eigene Konstruktion für Windkanal 2D (Segel als dünnes gewölbtes NACA-8402-Profil)
+lizenz: Teil dieses Projekts
+bezug: Segeltiefe
+groesse: 32
+winkel: 12
+reynolds: 1500
+detail: 0.02
+drehpunkt: 0.3 0
+
+teil: Mast
+ellipse: -0.015 0 0.03 0.022 48
+
+teil: Segel
+naca: 8402 120

@@ -62,21 +62,32 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($p in $pngs) { $bw.Write($p) }
 $bw.Close()
 
+# --- Modelle (Datendateien) als eingebettete Ressourcen ---
+$modelRes = @("/resource:$(Join-Path $root 'Modelle\katalog.txt'),Modelle.katalog.txt")
+$modelRes += Get-ChildItem (Join-Path $root 'Modelle') -Filter *.modell | ForEach-Object { "/resource:$($_.FullName),Modelle.$($_.Name)" }
+$modelRes += Get-ChildItem (Join-Path $root 'Modelle\Profile') -Filter *.dat | ForEach-Object { "/resource:$($_.FullName),Profile.$($_.Name)" }
+
 # --- App ---
 $app = Join-Path $bin 'Windkanal2D.exe'
 & $csc /nologo /target:winexe /unsafe /optimize+ /platform:x64 /win32icon:$ico `
     /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:$app `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
-    (Join-Path $root 'App\*.cs')
+    $modelRes (Join-Path $root 'App\*.cs')
 if ($LASTEXITCODE -ne 0) { throw 'App-Build fehlgeschlagen' }
 
 # --- Validierungstest (Konsole) ---
 $test = Join-Path $bin 'ValidationTest.exe'
-& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /out:$test `
+& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /out:$test $modelRes `
     (Join-Path $root 'App\Solver.cs') (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') `
-    (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'Test\ValidationTest.cs')
+    (Join-Path $root 'App\Models.cs') (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'Test\ValidationTest.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Test-Build fehlgeschlagen' }
+
+# --- Modell-Vorschau (prüft alle Modelle und zeichnet eine Übersicht) ---
+$preview = Join-Path $bin 'ModellVorschau.exe'
+& $csc /nologo /optimize+ /platform:x64 /r:System.Drawing.dll /out:$preview $modelRes `
+    (Join-Path $root 'App\Shapes.cs') (Join-Path $root 'App\Models.cs') (Join-Path $root 'Test\ModellVorschau.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Vorschau-Build fehlgeschlagen' }
 
 # --- Installer (App als eingebettete Ressource) ---
 $setup = Join-Path $bin 'Setup.exe'

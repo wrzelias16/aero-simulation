@@ -1,0 +1,14 @@
+# NACA 23012 (Fünfziffern-Reihe)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NACA 23012 (Fünfziffern-Reihe)
+beschreibung: Wölbung weit vorn, geringes Moment: viele Propellerflugzeuge der 1930er bis 1950er.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei naca23012.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: naca23012

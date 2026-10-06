@@ -1,0 +1,14 @@
+# NACA 0018 (dick, symmetrisch)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NACA 0018 (dick, symmetrisch)
+beschreibung: Symmetrisch, 18 % dick: dicke Leitwerke und Vertikalachsen-Windräder.
+quelle: NACA-Formeln aus Abbott/von Doenhoff, „Theory of Wing Sections“ bzw. NACA Report 824 (im Programm berechnet)
+lizenz: gemeinfrei (NACA, US-Regierungswerk)
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+naca: 0018 160

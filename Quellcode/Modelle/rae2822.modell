@@ -1,0 +1,14 @@
+# RAE 2822
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: RAE 2822
+beschreibung: Transsonisches Referenzprofil des Royal Aircraft Establishment, Standardfall der CFD.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei rae2822.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: rae2822

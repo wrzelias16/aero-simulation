@@ -1,0 +1,14 @@
+# Selig S1223 (Hochauftrieb)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Selig S1223 (Hochauftrieb)
+beschreibung: Extrem gewölbt, entworfen für sehr hohen Auftrieb bei kleinen Reynoldszahlen.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei s1223.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: s1223

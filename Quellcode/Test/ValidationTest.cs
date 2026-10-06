@@ -18,6 +18,7 @@ namespace Windkanal
                     int.Parse(args[0]), int.Parse(args[1]), float.Parse(args[2], ci), double.Parse(args[3], ci), int.Parse(args[4]));
                 return;
             }
+            ModelCheck();
             SmokeCheck();
             Run("Stabilität Zylinder 40 % Versperrung Re=20000", 400, 160, 64, 20000, 25000);
             Run("Stabilität Quadrat 60 % Versperrung Re=20000", 400, 160, 96, 20000, 25000, ShapeKind.Quadrat);
@@ -26,6 +27,21 @@ namespace Windkanal
             Run("Zylinder Re=100, Versperrung 8 %", 900, 360, 30, 100, 40000);
             Run("Zylinder Re=100, Versperrung 4 %", 1200, 480, 20, 100, 30000);
             Run("Zylinder Re=20, Versperrung 8 %", 900, 360, 30, 20, 30000);
+        }
+
+        /// <summary>Alle Modelldateien müssen fehlerfrei laden und auf dem mittleren Gitter mindestens eine Zelle belegen.</summary>
+        static void ModelCheck()
+        {
+            int empty = 0;
+            foreach (var m in ModelLibrary.All)
+            {
+                if (m.IsCustom) continue;
+                var mask = ModelLibrary.Rasterize(m, 600, 240, m.OnGround ? 180 : 150, m.SizePercent / 100f * 240, m.Angle);
+                if (Array.IndexOf(mask, true) < 0) { empty++; Console.WriteLine("  leer: " + m.Id); }
+            }
+            foreach (var e in ModelLibrary.Errors) Console.WriteLine("  " + e);
+            Console.WriteLine("Modelle: " + ModelLibrary.All.Count + " geladen, " + ModelLibrary.Errors.Count + " Fehler"
+                + (ModelLibrary.Errors.Count == 0 && empty == 0 ? " -> OK" : " -> FEHLER"));
         }
 
         /// <summary>

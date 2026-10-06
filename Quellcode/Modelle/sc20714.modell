@@ -1,0 +1,14 @@
+# NASA SC(2)-0714
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NASA SC(2)-0714
+beschreibung: Superkritisch, 14 % dick, für hohen Auftrieb im Reiseflug.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei sc20714.dat, Original unverändert in Modelle/Profile
+lizenz: US-Regierungswerk (NASA), gemeinfrei; Datei aus der UIUC-Datenbank
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: sc20714

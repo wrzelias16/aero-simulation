@@ -1,0 +1,31 @@
+# Vertikalachsen-Windrad (H-Rotor)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Vertikalachsen-Windrad (H-Rotor)
+beschreibung: Querschnitt eines H-Darrieus-Rotors: drei NACA-0018-Blätter auf einem Kreis, hier stehend (nicht drehend).
+quelle: Eigene Konstruktion für Windkanal 2D (NACA 0018 nach Formel)
+lizenz: Teil dieses Projekts
+bezug: Rotordurchmesser
+groesse: 30
+winkel: 0
+reynolds: 500
+
+teil: Blatt 1
+naca: 0018 100
+sehne: 0.25
+winkel: -180
+lage: 0.125 0.5
+
+teil: Blatt 2
+naca: 0018 100
+sehne: 0.25
+winkel: -300
+lage: -0.49551 -0.14175
+
+teil: Blatt 3
+naca: 0018 100
+sehne: 0.25
+winkel: -420
+lage: 0.37051 -0.35825
+
+teil: Welle
+kreis: 0 0 0.04 48

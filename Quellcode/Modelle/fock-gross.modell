@@ -1,0 +1,24 @@
+# Fock und Großsegel
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Fock und Großsegel
+beschreibung: Zwei Segel mit Spalt: die Fock beschleunigt die Strömung an der Leeseite des Großsegels (Düseneffekt).
+quelle: Eigene Konstruktion für Windkanal 2D (Segel als NACA-8402-Profile)
+lizenz: Teil dieses Projekts
+bezug: Segeltiefe
+groesse: 26
+winkel: 12
+reynolds: 1500
+detail: 0.02
+drehpunkt: 0.1 0
+
+teil: Mast
+ellipse: -0.015 0 0.03 0.022 48
+
+teil: Großsegel
+naca: 8402 120
+
+teil: Fock
+naca: 8402 120
+sehne: 0.75
+winkel: 6
+lage: -0.62 0.18162

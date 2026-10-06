@@ -1,0 +1,32 @@
+# Hochgeschwindigkeitszug
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Hochgeschwindigkeitszug
+beschreibung: Kurzer Zug mit zwei stromlinienförmigen Triebköpfen (50 m), dicht über dem Gleis.
+quelle: Eigene Konstruktion für Windkanal 2D nach typischen Abmessungen, kein bestimmtes Fahrzeugmodell
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 58
+winkel: 0
+reynolds: 3000
+boden: ja
+bodenabstand: 0.006
+
+teil: Zug
+glatt: 4
+punkte:
+  0 0.011
+  0.005 0.022
+  0.02 0.034
+  0.05 0.048
+  0.09 0.062
+  0.13 0.072
+  0.18 0.077
+  0.82 0.077
+  0.87 0.072
+  0.91 0.062
+  0.95 0.048
+  0.98 0.034
+  0.995 0.022
+  1 0.011
+  0.992 0.008 !
+  0.008 0.008 !

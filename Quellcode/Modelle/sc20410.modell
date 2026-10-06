@@ -1,0 +1,14 @@
+# NASA SC(2)-0410
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NASA SC(2)-0410
+beschreibung: Superkritisch, 10 % dick, für Reisefluggeschwindigkeit knapp unter Mach 1.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei sc20410.dat, Original unverändert in Modelle/Profile
+lizenz: US-Regierungswerk (NASA), gemeinfrei; Datei aus der UIUC-Datenbank
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: sc20410

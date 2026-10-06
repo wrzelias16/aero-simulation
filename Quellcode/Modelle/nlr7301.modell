@@ -1,0 +1,14 @@
+# NLR 7301
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: NLR 7301
+beschreibung: Superkritisches Profil des niederländischen NLR, bekannt als Zweielement-Messfall.
+quelle: UIUC Airfoil Coordinates Database (Prof. M. Selig, University of Illinois), Datei nlr7301.dat, Original unverändert in Modelle/Profile
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Sehnenlänge
+groesse: 25
+winkel: 5
+reynolds: 1000
+drehpunkt: 0.25 0
+
+teil: Profil
+profil: nlr7301

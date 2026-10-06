@@ -686,6 +686,116 @@ namespace Windkanal
         }
     }
 
+    /// <summary>
+    /// Modellauswahl: zeigt Kategorie und Modell; das Menü listet die Kategorien, jede mit einem Untermenü ihrer Modelle.
+    /// </summary>
+    sealed class ModelPicker : Painted
+    {
+        readonly List<KeyValuePair<string, List<Model>>> groups;
+        Model sel;
+        public event EventHandler SelectedChanged;
+
+        public ModelPicker(List<KeyValuePair<string, List<Model>>> groups)
+        {
+            this.groups = groups;
+            SetStyle(ControlStyles.Selectable, false);
+            Cursor = Cursors.Hand;
+            Height = 48;
+        }
+
+        public Model Selected
+        {
+            get { return sel; }
+            set
+            {
+                if (value == sel) return;
+                sel = value;
+                Invalidate();
+                if (SelectedChanged != null) SelectedChanged(this, EventArgs.Empty);
+            }
+        }
+
+        ContextMenuStrip NewMenu()
+        {
+            return new ContextMenuStrip
+            {
+                Renderer = new MenuRenderer(), ShowImageMargin = false, ShowCheckMargin = false,
+                BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.Base, Padding = new Padding(4), DropShadowEnabled = true
+            };
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left || groups.Count == 0) return;
+            var menu = NewMenu();
+            foreach (var g in groups)
+            {
+                bool current = sel != null && g.Key == sel.Category;
+                var cat = new ToolStripMenuItem(g.Key)
+                {
+                    AutoSize = false, Size = new Size(Width - 8, 34), ForeColor = Theme.Text,
+                    Font = current ? Theme.Label : Theme.Base, Padding = new Padding(6, 0, 0, 0),
+                    ShortcutKeyDisplayString = g.Value.Count.ToString(), ShowShortcutKeys = true
+                };
+                if (g.Value.Count == 1)
+                {
+                    // Kategorie mit nur einem Eintrag (Eigene Zeichnung) direkt wählbar
+                    var only = g.Value[0];
+                    cat.ShortcutKeyDisplayString = "";
+                    cat.Click += delegate { Selected = only; };
+                    menu.Items.Add(cat);
+                    continue;
+                }
+                var sub = (ToolStripDropDownMenu)cat.DropDown;
+                sub.Renderer = new MenuRenderer();
+                sub.ShowImageMargin = false;
+                sub.ShowCheckMargin = false;
+                sub.BackColor = Theme.Surface;
+                sub.Padding = new Padding(4);
+                sub.DropShadowEnabled = true;
+                int w = 0;
+                foreach (var m in g.Value) w = Math.Max(w, Theme.Width(m.Name, Theme.Label));
+                w = Math.Max(Width - 8, w + 36);
+                // lange Listen in zwei Spalten wären unübersichtlich; das Untermenü scrollt, wenn es höher als der Bildschirm ist
+                foreach (var m in g.Value)
+                {
+                    var model = m;
+                    var it = new ToolStripMenuItem(m.Name)
+                    {
+                        AutoSize = false, Size = new Size(w, 30), ForeColor = Theme.Text,
+                        Font = m == sel ? Theme.Label : Theme.Base, Padding = new Padding(6, 0, 0, 0),
+                        ToolTipText = m.Description
+                    };
+                    it.Click += delegate { Selected = model; };
+                    cat.DropDownItems.Add(it);
+                }
+                sub.ShowItemToolTips = true;
+                menu.Items.Add(cat);
+            }
+            menu.Closed += delegate { Pressed = false; Invalidate(); BeginInvoke((Action)menu.Dispose); };
+            menu.Show(this, new Point(0, Height + 4));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.Prepare(g);
+            g.Clear(BackColor);
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 12);
+            Theme.StrokeRound(g, Theme.Border, r, 12);
+            if (sel != null)
+            {
+                Theme.Draw(g, sel.Category, Theme.Small, Theme.Muted, new Rectangle(14, 6, Width - 44, 16), TextFormatFlags.EndEllipsis);
+                Theme.Draw(g, sel.Name, Theme.Label, Theme.Text, new Rectangle(14, 22, Width - 44, 20), TextFormatFlags.EndEllipsis);
+            }
+            float cx = Width - 20, cy = Height / 2f;
+            using (var p = new Pen(Theme.Muted, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawLines(p, new[] { new PointF(cx - 4, cy - 2), new PointF(cx, cy + 2), new PointF(cx + 4, cy - 2) });
+        }
+    }
+
     sealed class MenuRenderer : ToolStripProfessionalRenderer
     {
         public MenuRenderer() : base(new Colors()) { RoundedEdges = false; }
@@ -699,8 +809,16 @@ namespace Windkanal
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
-            e.TextColor = Theme.Text;
+            var mi = e.Item as ToolStripMenuItem;
+            bool shortcut = mi != null && !string.IsNullOrEmpty(mi.ShortcutKeyDisplayString) && e.Text == mi.ShortcutKeyDisplayString && e.Text != mi.Text;
+            e.TextColor = shortcut ? Theme.Faint : Theme.Text;
             base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
+        {
+            e.ArrowColor = Theme.Muted;
+            base.OnRenderArrow(e);
         }
 
         protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
@@ -872,6 +990,8 @@ namespace Windkanal
     {
         public string[] Keys = new string[0], Values = new string[0];
         public const int Row = 26;
+        /// <summary>Zeile, deren Wert als Warnung (orange) erscheint, -1 = keine.</summary>
+        public int WarnRow = -1;
 
         public InfoRows() { SetStyle(ControlStyles.Selectable, false); }
 
@@ -887,7 +1007,7 @@ namespace Windkanal
             {
                 var r = new Rectangle(0, y, Width, Row);
                 Theme.Draw(g, Keys[i], Font, Theme.Muted, r, TextFormatFlags.VerticalCenter);
-                Theme.Draw(g, i < Values.Length ? Values[i] : "", Theme.Label, Theme.Text, r, TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+                Theme.Draw(g, i < Values.Length ? Values[i] : "", Theme.Label, i == WarnRow ? Theme.Orange : Theme.Text, r, TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             }
         }
     }
