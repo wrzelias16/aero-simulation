@@ -9,14 +9,21 @@ using System.Windows.Forms;
 
 namespace Windkanal
 {
-    /// <summary>Farben, Schriften und Zeichenhilfen für das helle und das dunkle Design.</summary>
+    /// <summary>Farben, Schrift (Outfit, eingebettet) und Zeichenhilfen für das helle und das dunkle Design.</summary>
     static class Theme
     {
         public static bool Dark = true;
-        public static Color Bg, Chrome, Card, Ctl, CtlHover, Border, Track, Text, Muted, Faint,
-                            Accent, AccentHover, OnAccent, Good, Warn, Cd, Cl, Grid, Zero;
+        public static Color Bg, Card, Surface, Ctl, CtlHover, Border, Track, Text, Muted, Faint,
+                            Ink, OnInk, Accent, Pink, Green, Orange, Grid, Shadow;
 
-        static Theme() { Apply(LoadDark()); }
+        static Theme()
+        {
+            LoadFonts();
+            Base = Regular(10f); Small = Regular(8.75f); Label = Medium(9.75f); SmallMed = Medium(8.75f);
+            Title = Medium(11.5f); Word = Medium(15f); Mid = Regular(18f); Big = Regular(26f);
+            Icons = MakeIconFont();
+            Apply(LoadDark());
+        }
 
         static Color C(int r, int g, int b) { return Color.FromArgb(r, g, b); }
 
@@ -25,99 +32,79 @@ namespace Windkanal
             Dark = dark;
             if (dark)
             {
-                Bg = C(18, 21, 26); Chrome = C(22, 25, 31); Card = C(30, 34, 42);
-                Ctl = C(40, 45, 55); CtlHover = C(50, 56, 68); Border = C(48, 54, 65); Track = C(55, 61, 74);
-                Text = C(230, 233, 238); Muted = C(140, 148, 162); Faint = C(95, 102, 116);
-                Accent = C(77, 163, 255); AccentHover = C(104, 178, 255); OnAccent = C(10, 18, 30);
-                Good = C(80, 210, 140); Warn = C(255, 196, 87); Cd = C(255, 159, 67); Cl = C(84, 200, 255);
-                Grid = C(44, 50, 60); Zero = C(80, 88, 102);
+                Bg = C(13, 14, 16); Card = C(23, 25, 28); Surface = C(31, 34, 38);
+                Ctl = C(36, 39, 44); CtlHover = C(45, 49, 55); Border = C(40, 43, 48); Track = C(52, 56, 63);
+                Text = C(241, 242, 244); Muted = C(150, 156, 165); Faint = C(102, 108, 117);
+                Ink = C(241, 242, 244); OnInk = C(18, 19, 22);
+                Accent = C(98, 128, 255); Pink = C(255, 104, 152); Green = C(62, 207, 132); Orange = C(255, 148, 77);
+                Grid = C(44, 47, 53); Shadow = Color.Black;
             }
             else
             {
-                Bg = C(233, 236, 241); Chrome = C(246, 247, 249); Card = C(255, 255, 255);
-                Ctl = C(238, 241, 245); CtlHover = C(225, 230, 237); Border = C(220, 224, 231); Track = C(212, 217, 225);
-                Text = C(24, 28, 36); Muted = C(92, 100, 114); Faint = C(138, 146, 158);
-                Accent = C(30, 115, 232); AccentHover = C(55, 134, 242); OnAccent = Color.White;
-                Good = C(28, 160, 90); Warn = C(196, 120, 0); Cd = C(232, 118, 18); Cl = C(14, 138, 206);
-                Grid = C(230, 233, 238); Zero = C(186, 192, 202);
+                Bg = C(229, 232, 237); Card = C(246, 247, 249); Surface = Color.White;
+                Ctl = C(238, 240, 243); CtlHover = C(228, 231, 236); Border = C(226, 229, 234); Track = C(222, 225, 230);
+                Text = C(21, 23, 26); Muted = C(108, 114, 124); Faint = C(160, 165, 173);
+                Ink = C(21, 23, 26); OnInk = Color.White;
+                Accent = C(48, 86, 245); Pink = C(240, 82, 139); Green = C(36, 178, 104); Orange = C(232, 112, 36);
+                Grid = C(229, 232, 236); Shadow = C(40, 52, 80);
             }
-            Renderer.BgColor = Bg.ToArgb();
+            Renderer.BgColor = Card.ToArgb();
         }
 
-        // Gewähltes Design merken (HKCU\Software\Windkanal2D, Wert "Design")
-        const string PrefKey = @"Software\Windkanal2D";
+        /// <summary>Hintergrund für kleine Etiketten in der Farbe <paramref name="c"/>.</summary>
+        public static Color Tint(Color c) { return Mix(Card, c, Dark ? 0.2f : 0.13f); }
 
-        static bool LoadDark()
+        // ------------------------------------------------------------ Schrift
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr AddFontMemResourceEx(IntPtr data, uint len, IntPtr pdv, ref uint fonts);
+
+        static PrivateFontCollection fonts;
+        static FontFamily famRegular, famMedium;
+
+        /// <summary>Outfit liegt als Ressource in der .exe und wird nur für diesen Prozess geladen (keine Installation).</summary>
+        static void LoadFonts()
         {
             try
             {
-                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(PrefKey))
-                {
-                    var v = k != null ? k.GetValue("Design") as string : null;
-                    if (v == "hell") return false;
-                    if (v == "dunkel") return true;
-                }
-                // sonst der Windows-Einstellung folgen (Apps: hell/dunkel)
-                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
-                {
-                    var v = k != null ? k.GetValue("AppsUseLightTheme") : null;
-                    if (v is int) return (int)v == 0;
-                }
-            }
-            catch { }
-            return true;
-        }
-
-        public static void SaveDark(bool dark)
-        {
-            try
-            {
-                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(PrefKey))
-                    k.SetValue("Design", dark ? "dunkel" : "hell");
-            }
-            catch { }
-        }
-
-        /// <summary>App-Logo: Stromlinien um einen Kreis auf dunkelblauem Grund.</summary>
-        public static void DrawLogo(Graphics g, float lx, float ly, float s, float phase = 0)
-        {
-            using (var bg = new LinearGradientBrush(new RectangleF(lx, ly, s, s), C(30, 48, 84), C(14, 20, 34), 90f))
-            using (var path = Round(new RectangleF(lx, ly, s, s), s * 0.25f))
-                g.FillPath(bg, path);
-            Color[] cols = { C(84, 200, 255), C(106, 253, 98), C(255, 159, 67) };
-            float cx = lx + s * 0.44f, cy = ly + s * 0.5f;
-            for (int i = 0; i < 3; i++)
-                using (var pen = new Pen(cols[i], Math.Max(1.4f, s * 0.05f)))
-                    foreach (int sgn in new[] { -1, 1 })
+                fonts = new PrivateFontCollection();
+                var asm = typeof(Theme).Assembly;
+                foreach (var name in new[] { "Outfit-Regular.ttf", "Outfit-Medium.ttf" })
+                    using (var s = asm.GetManifestResourceStream("Fonts." + name))
                     {
-                        var pts = new PointF[25];
-                        for (int k = 0; k < pts.Length; k++)
-                        {
-                            float x = lx + s * (0.1f + 0.8f * k / (pts.Length - 1));
-                            float d = (x - cx) / (s * 0.19f);
-                            float wave = phase != 0 ? s * 0.012f * (i + 1) * (float)Math.Sin(phase * 2 + k * 0.5 + i) * Math.Max(0, (x - cx) / s) * 3 : 0;
-                            float yy = cy + sgn * s * (0.11f + 0.115f * i) + sgn * s * (0.16f - 0.035f * i) * (float)Math.Exp(-d * d) + wave;
-                            pts[k] = new PointF(x, yy);
-                        }
-                        g.DrawLines(pen, pts);
+                        if (s == null) continue;
+                        var data = new byte[s.Length];
+                        int read = 0;
+                        while (read < data.Length) { int n = s.Read(data, read, data.Length - read); if (n <= 0) break; read += n; }
+                        IntPtr p = Marshal.AllocCoTaskMem(data.Length);   // bleibt bis Programmende reserviert
+                        Marshal.Copy(data, 0, p, data.Length);
+                        fonts.AddMemoryFont(p, data.Length);
+                        uint count = 0;
+                        AddFontMemResourceEx(p, (uint)data.Length, IntPtr.Zero, ref count);   // damit auch TextRenderer/GDI sie findet
                     }
-            float r = s * 0.13f;
-            using (var b = new SolidBrush(C(232, 235, 240))) g.FillEllipse(b, cx - r, cy - r, 2 * r, 2 * r);
+                foreach (var f in fonts.Families)
+                {
+                    if (f.Name == "Outfit") famRegular = f;
+                    else if (f.Name == "Outfit Medium") famMedium = f;
+                }
+            }
+            catch { }
+            if (famRegular == null) famRegular = new FontFamily("Segoe UI");
+            if (famMedium == null) famMedium = famRegular;
         }
 
-        public static readonly Font Base = new Font("Segoe UI", 9f);
-        public static readonly Font Small = new Font("Segoe UI", 8.25f);
-        public static readonly Font Semi = new Font("Segoe UI Semibold", 9f);
-        public static readonly Font Caps = new Font("Segoe UI Semibold", 7.75f);
-        public static readonly Font Title = new Font("Segoe UI Semibold", 13f);
-        public static readonly Font Big = new Font("Segoe UI Semibold", 17f);
-        public static readonly Font Icons = MakeIconFont();
+        public static Font Regular(float pt) { return new Font(famRegular, pt, FontStyle.Regular, GraphicsUnit.Point); }
+        public static Font Medium(float pt) { return new Font(famMedium, pt, FontStyle.Regular, GraphicsUnit.Point); }
+
+        public static readonly Font Base, Small, Label, SmallMed, Title, Word, Mid, Big, Icons;
 
         static Font MakeIconFont()
         {
-            var f = new Font("Segoe MDL2 Assets", 9f);
+            var f = new Font("Segoe MDL2 Assets", 10f);
             return f.Name == "Segoe MDL2 Assets" ? f : null;   // fehlt nur auf sehr alten Windows-Versionen
         }
+
+        // ------------------------------------------------------------ Zeichnen
 
         public static GraphicsPath Round(RectangleF r, float rad)
         {
@@ -134,6 +121,7 @@ namespace Windkanal
 
         public static void FillRound(Graphics g, Color c, RectangleF r, float rad)
         {
+            if (r.Width <= 0 || r.Height <= 0) return;
             using (var p = Round(r, rad))
             using (var b = new SolidBrush(c)) g.FillPath(b, p);
         }
@@ -142,6 +130,18 @@ namespace Windkanal
         {
             using (var p = Round(r, rad))
             using (var pen = new Pen(c)) g.DrawPath(pen, p);
+        }
+
+        /// <summary>Weicher Schatten unter einer Fläche (nur im hellen Design sichtbar).</summary>
+        public static void SoftShadow(Graphics g, RectangleF r, float rad)
+        {
+            if (Dark) return;
+            for (int i = 1; i <= 6; i++)
+            {
+                var s = RectangleF.Inflate(r, i, i);
+                s.Offset(0, 3);
+                FillRound(g, Color.FromArgb(5, Shadow), s, rad + i);
+            }
         }
 
         public static void Prepare(Graphics g)
@@ -155,16 +155,72 @@ namespace Windkanal
             TextRenderer.DrawText(g, s, f, r, c, flags | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
         }
 
+        public static int Width(string s, Font f)
+        {
+            return TextRenderer.MeasureText(s, f, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width;
+        }
+
+        /// <summary>Kleines Etikett mit runden Enden, z. B. „Ø 1,526“. Gibt die Breite zurück.</summary>
+        public static int Chip(Graphics g, string text, float x, float y, Color fg, Color bg, int h = 24, bool dot = false)
+        {
+            int tw = Width(text, SmallMed), pad = 10, dw = dot ? 14 : 0;
+            int w = tw + 2 * pad + dw;
+            FillRound(g, bg, new RectangleF(x, y, w, h), h / 2f);
+            if (dot) using (var b = new SolidBrush(fg)) g.FillEllipse(b, x + pad, y + h / 2f - 3.5f, 7, 7);
+            Draw(g, text, SmallMed, fg, new Rectangle((int)x + pad + dw, (int)y, tw + 2, h), TextFormatFlags.VerticalCenter);
+            return w;
+        }
+
+        public static int ChipWidth(string text, bool dot = false) { return Width(text, SmallMed) + 20 + (dot ? 14 : 0); }
+
+        /// <summary>Reihe aus Kapseln; <paramref name="filled"/> Anteil (0..1) in Farbe <paramref name="on"/>.</summary>
+        public static void Capsules(Graphics g, RectangleF r, int n, float filled, Color on, Color off)
+        {
+            float gap = 4, w = (r.Width - gap * (n - 1)) / n;
+            int k = (int)Math.Round(filled * n);
+            for (int i = 0; i < n; i++)
+                FillRound(g, i < k ? on : off, new RectangleF(r.X + i * (w + gap), r.Y, w, r.Height), w / 2);
+        }
+
         public static Color Mix(Color a, Color b, float t)
         {
+            t = Math.Max(0, Math.Min(1, t));
             return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
         }
+
+        /// <summary>Logo: Stromlinien um einen Zylinder, einfarbig.</summary>
+        public static void DrawLogo(Graphics g, float x, float y, float s, Color bg, Color fg)
+        {
+            FillRound(g, bg, new RectangleF(x, y, s, s), s * 0.3f);
+            float cx = x + s * 0.42f, cy = y + s * 0.5f, r = s * 0.12f;
+            float[] offs = { 0.13f, 0.25f };
+            int[] alpha = { 255, 150 };
+            for (int i = 0; i < offs.Length; i++)
+                using (var pen = new Pen(Color.FromArgb(alpha[i], fg), Math.Max(1.3f, s * 0.06f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                    foreach (int sgn in new[] { -1, 1 })
+                    {
+                        var pts = new PointF[21];
+                        for (int k = 0; k < pts.Length; k++)
+                        {
+                            float px = x + s * (0.18f + 0.66f * k / (pts.Length - 1));
+                            float d = (px - cx) / (s * 0.17f);
+                            pts[k] = new PointF(px, cy + sgn * s * (offs[i] + (0.13f - 0.04f * i) * (float)Math.Exp(-d * d)));
+                        }
+                        g.DrawLines(pen, pts);
+                    }
+            using (var b = new SolidBrush(fg)) g.FillEllipse(b, cx - r, cy - r, 2 * r, 2 * r);
+        }
+
+        // ------------------------------------------------------------ Fensterrahmen
 
         [DllImport("dwmapi.dll")]
         static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
         static extern int SetWindowTheme(IntPtr hwnd, string app, string idList);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
 
         /// <summary>Titelleiste passend zum Design (dunkel: Windows 10 ab 1809 und Windows 11).</summary>
         public static void DarkTitleBar(IntPtr hwnd)
@@ -177,9 +233,6 @@ namespace Windkanal
             }
             catch { }
         }
-
-        [DllImport("user32.dll")]
-        static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
 
         /// <summary>Titelleiste nach einem Designwechsel neu zeichnen lassen.</summary>
         public static void RefreshFrame(Form f)
@@ -194,9 +247,39 @@ namespace Windkanal
         }
 
         /// <summary>Bildlaufleisten passend zum Design.</summary>
-        public static void DarkScrollbars(IntPtr hwnd)
+        public static void ThemeScrollbars(IntPtr hwnd)
         {
             try { SetWindowTheme(hwnd, Dark ? "DarkMode_Explorer" : "Explorer", null); } catch { }
+        }
+
+        // ------------------------------------------------------------ Einstellung merken
+
+        // HKCU\Software\Windkanal2D, Wert "Design"
+        const string PrefKey = @"Software\Windkanal2D";
+
+        static bool LoadDark()
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(PrefKey))
+                {
+                    var v = k != null ? k.GetValue("Design") as string : null;
+                    if (v == "hell") return false;
+                    if (v == "dunkel") return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        public static void SaveDark(bool dark)
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(PrefKey))
+                    k.SetValue("Design", dark ? "dunkel" : "hell");
+            }
+            catch { }
         }
     }
 
@@ -232,7 +315,36 @@ namespace Windkanal
         }
     }
 
-    /// <summary>Flache Schaltfläche mit abgerundeten Ecken und optionalem Symbol.</summary>
+    /// <summary>Karte mit großen runden Ecken und Titel; Inhalte zeichnet der Besitzer über das Paint-Ereignis.</summary>
+    sealed class Card : Panel
+    {
+        public const int Radius = 20, Pad = 20, Head = 58;
+        public string Title;
+
+        public Card(string title)
+        {
+            Title = title;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = Theme.Bg;
+        }
+
+        public int Inner { get { return Width - 2 * Pad; } }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.Prepare(g);
+            g.Clear(BackColor);
+            var r = new RectangleF(0, 0, Width - 0.5f, Height - 0.5f);
+            Theme.FillRound(g, Theme.Card, r, Radius);
+            Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, Radius);
+            if (!string.IsNullOrEmpty(Title))
+                Theme.Draw(g, Title, Theme.Title, Theme.Text, new Rectangle(Pad, 18, Width - 2 * Pad, 24), TextFormatFlags.VerticalCenter);
+            base.OnPaint(e);
+        }
+    }
+
+    /// <summary>Schaltfläche als Pille (schwarz = Hauptaktion) oder runder Symbolknopf.</summary>
     sealed class FlatButton : Painted
     {
         public bool Primary;
@@ -242,7 +354,8 @@ namespace Windkanal
         {
             SetStyle(ControlStyles.Selectable, false);
             Cursor = Cursors.Hand;
-            Height = 32;
+            Font = Theme.Label;
+            Height = 40;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -250,20 +363,123 @@ namespace Windkanal
             var g = e.Graphics;
             Theme.Prepare(g);
             g.Clear(BackColor);
-            Color fill = Primary ? (Hover ? Theme.AccentHover : Theme.Accent) : (Hover ? Theme.CtlHover : Theme.Ctl);
-            if (Pressed) fill = Theme.Mix(fill, Color.Black, 0.15f);
-            if (!Enabled) fill = Theme.Mix(fill, BackColor, 0.5f);
-            Theme.FillRound(g, fill, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), 6);
-            Color fg = Primary ? Theme.OnAccent : Theme.Text;
-            if (!Enabled) fg = Theme.Faint;
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fill, fg;
+            if (Primary)
+            {
+                fill = Hover ? Theme.Mix(Theme.Ink, Theme.Muted, 0.25f) : Theme.Ink;
+                fg = Theme.OnInk;
+            }
+            else
+            {
+                fill = Hover ? Theme.CtlHover : Theme.Surface;
+                fg = Theme.Text;
+            }
+            if (Pressed) fill = Theme.Mix(fill, Theme.Muted, 0.2f);
+            if (!Enabled) { fill = Theme.Ctl; fg = Theme.Faint; }
+            if (!Primary) Theme.SoftShadow(g, RectangleF.Inflate(r, -3, -3), Height / 2f);
+            Theme.FillRound(g, fill, r, Height / 2f);
+            if (!Primary) Theme.StrokeRound(g, Theme.Border, r, Height / 2f);
 
-            Size ts = TextRenderer.MeasureText(g, Text, Font, Size, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
             bool icon = Icon != null && Theme.Icons != null;
-            int iw = icon ? 16 + (Text.Length > 0 ? 8 : 0) : 0;
-            int x = (Width - ts.Width - iw) / 2;
+            int tw = Text.Length > 0 ? Theme.Width(Text, Font) : 0;
+            int iw = icon ? 16 + (tw > 0 ? 8 : 0) : 0;
+            int x = (Width - tw - iw) / 2;
             if (icon)
-                Theme.Draw(g, Icon, Theme.Icons, fg, new Rectangle(x, 0, 16, Height), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            Theme.Draw(g, Text, Font, fg, new Rectangle(x + iw, 0, ts.Width + 2, Height), TextFormatFlags.VerticalCenter);
+                Theme.Draw(g, Icon, Theme.Icons, fg, new Rectangle(x, 1, 16, Height), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (tw > 0)
+                Theme.Draw(g, Text, Font, fg, new Rectangle(x + iw, 0, tw + 2, Height - 1), TextFormatFlags.VerticalCenter);
+        }
+    }
+
+    /// <summary>Umschalter mit mehreren Einträgen in einer Pille (wie eine Navigation).</summary>
+    sealed class Segmented : Painted
+    {
+        public readonly List<string> Items = new List<string>();
+        int sel, hot = -1;
+        public event EventHandler SelectedIndexChanged;
+
+        public Segmented()
+        {
+            SetStyle(ControlStyles.Selectable, false);
+            Cursor = Cursors.Hand;
+            Font = Theme.Label;
+            Height = 44;
+        }
+
+        public int SelectedIndex
+        {
+            get { return sel; }
+            set
+            {
+                if (value == sel) return;
+                sel = value;
+                Invalidate();
+                if (SelectedIndexChanged != null) SelectedIndexChanged(this, EventArgs.Empty);
+            }
+        }
+
+        public int PreferredWidth
+        {
+            get
+            {
+                int w = 8;
+                foreach (var s in Items) w += Theme.Width(s, Font) + 36;
+                return w;
+            }
+        }
+
+        RectangleF ItemRect(int i)
+        {
+            float x = 4;
+            for (int k = 0; k < i; k++) x += Theme.Width(Items[k], Font) + 36;
+            return new RectangleF(x, 4, Theme.Width(Items[i], Font) + 36, Height - 9);
+        }
+
+        int HitTest(Point p)
+        {
+            for (int i = 0; i < Items.Count; i++)
+                if (ItemRect(i).Contains(p)) return i;
+            return -1;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            int h = HitTest(e.Location);
+            if (h != hot) { hot = h; Invalidate(); }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e) { hot = -1; base.OnMouseLeave(e); }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            int h = HitTest(e.Location);
+            if (e.Button == MouseButtons.Left && h >= 0) SelectedIndex = h;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.Prepare(g);
+            g.Clear(BackColor);
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Theme.FillRound(g, Theme.Dark ? Theme.Card : Color.FromArgb(240, 242, 245), r, Height / 2f);
+            Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, Height / 2f);
+            for (int i = 0; i < Items.Count; i++)
+            {
+                var ir = ItemRect(i);
+                if (i == sel)
+                {
+                    Theme.SoftShadow(g, RectangleF.Inflate(ir, -3, -3), ir.Height / 2);
+                    Theme.FillRound(g, Theme.Dark ? Theme.CtlHover : Theme.Surface, ir, ir.Height / 2);
+                }
+                else if (i == hot)
+                    Theme.FillRound(g, Theme.Dark ? Theme.Surface : Theme.CtlHover, ir, ir.Height / 2);
+                Theme.Draw(g, Items[i], Font, i == sel ? Theme.Text : Theme.Muted, Rectangle.Round(ir),
+                           TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
         }
     }
 
@@ -279,7 +495,7 @@ namespace Windkanal
             SetStyle(ControlStyles.Selectable, true);
             TabStop = true;
             Cursor = Cursors.Hand;
-            Height = 44;
+            Height = 46;
         }
 
         public int Minimum { get { return min; } set { min = value; Invalidate(); } }
@@ -299,7 +515,7 @@ namespace Windkanal
             }
         }
 
-        const int Pad = 9, TrackY = 31;
+        const int Pad = 9, TrackY = 34;
 
         void SetFromMouse(int x)
         {
@@ -312,7 +528,7 @@ namespace Windkanal
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left || !Enabled) return;
             Focus();
-            if (e.Y >= TrackY - 12) SetFromMouse(e.X);
+            if (e.Y >= TrackY - 14) SetFromMouse(e.X);
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -344,21 +560,21 @@ namespace Windkanal
             var g = e.Graphics;
             Theme.Prepare(g);
             g.Clear(BackColor);
-            Theme.Draw(g, Text, Font, Enabled ? Theme.Muted : Theme.Faint, new Rectangle(0, 0, Width, 20), TextFormatFlags.VerticalCenter);
-            Theme.Draw(g, valueText, Theme.Semi, Enabled ? Theme.Text : Theme.Faint, new Rectangle(0, 0, Width, 20),
+            Theme.Draw(g, Text, Font, Enabled ? Theme.Muted : Theme.Faint, new Rectangle(0, 0, Width, 22), TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, valueText, Theme.Label, Enabled ? Theme.Text : Theme.Faint, new Rectangle(0, 0, Width, 22),
                        TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
 
             float t = max > min ? (val - min) / (float)(max - min) : 0;
             float x0 = Pad, x1 = Width - Pad, xt = x0 + t * (x1 - x0);
-            Theme.FillRound(g, Theme.Track, new RectangleF(x0, TrackY - 2, x1 - x0, 4), 2);
+            Theme.FillRound(g, Theme.Track, new RectangleF(x0, TrackY - 3, x1 - x0, 6), 3);
             Color acc = Enabled ? Theme.Accent : Theme.Faint;
-            Theme.FillRound(g, acc, new RectangleF(x0, TrackY - 2, xt - x0, 4), 2);
-            float r = Pressed || Hover ? 8 : 7;
+            Theme.FillRound(g, acc, new RectangleF(x0, TrackY - 3, xt - x0, 6), 3);
+            float r = Pressed || Hover ? 9 : 8;
             if (Focused && Enabled)
-                using (var halo = new SolidBrush(Color.FromArgb(60, Theme.Accent))) g.FillEllipse(halo, xt - r - 4, TrackY - r - 4, 2 * r + 8, 2 * r + 8);
-            using (var b = new SolidBrush(!Enabled ? Theme.Muted : Theme.Dark ? Theme.Text : Color.White)) g.FillEllipse(b, xt - r, TrackY - r, 2 * r, 2 * r);
-            if (!Theme.Dark) using (var p = new Pen(Theme.Border)) g.DrawEllipse(p, xt - r, TrackY - r, 2 * r, 2 * r);
-            using (var b = new SolidBrush(acc)) g.FillEllipse(b, xt - 3, TrackY - 3, 6, 6);
+                using (var halo = new SolidBrush(Color.FromArgb(50, Theme.Accent))) g.FillEllipse(halo, xt - r - 4, TrackY - r - 4, 2 * r + 8, 2 * r + 8);
+            Theme.SoftShadow(g, new RectangleF(xt - r + 2, TrackY - r + 2, 2 * r - 4, 2 * r - 4), r);
+            using (var b = new SolidBrush(Theme.Dark ? Theme.Text : Color.White)) g.FillEllipse(b, xt - r, TrackY - r, 2 * r, 2 * r);
+            using (var p = new Pen(Theme.Dark ? Theme.Text : Theme.Border)) g.DrawEllipse(p, xt - r, TrackY - r, 2 * r, 2 * r);
         }
     }
 
@@ -372,7 +588,7 @@ namespace Windkanal
         {
             SetStyle(ControlStyles.Selectable, false);
             Cursor = Cursors.Hand;
-            Height = 26;
+            Height = 28;
         }
 
         public bool Checked
@@ -394,17 +610,17 @@ namespace Windkanal
             var g = e.Graphics;
             Theme.Prepare(g);
             g.Clear(BackColor);
-            const int w = 34, h = 18;
+            const int w = 38, h = 22;
             float y = (Height - h) / 2f;
-            Color track = on ? (Hover ? Theme.AccentHover : Theme.Accent) : (Hover ? Theme.CtlHover : Theme.Track);
+            Color track = on ? Theme.Accent : (Hover ? Theme.CtlHover : Theme.Track);
             Theme.FillRound(g, track, new RectangleF(0, y, w, h), h / 2f);
             float kx = on ? w - h + 3 : 3;
-            using (var b = new SolidBrush(on ? Color.White : Theme.Muted)) g.FillEllipse(b, kx, y + 3, h - 6, h - 6);
-            Theme.Draw(g, Text, Font, Theme.Text, new Rectangle(w + 10, 0, Width - w - 10, Height), TextFormatFlags.VerticalCenter);
+            using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, kx, y + 3, h - 6, h - 6);
+            Theme.Draw(g, Text, Font, Theme.Text, new Rectangle(w + 12, 0, Width - w - 12, Height), TextFormatFlags.VerticalCenter);
         }
     }
 
-    /// <summary>Auswahlliste im dunklen Stil (öffnet ein Menü statt einer Windows-Combobox).</summary>
+    /// <summary>Auswahlliste (öffnet ein Menü statt einer Windows-Combobox).</summary>
     sealed class DropDown : Painted
     {
         public readonly List<string> Items = new List<string>();
@@ -415,7 +631,7 @@ namespace Windkanal
         {
             SetStyle(ControlStyles.Selectable, false);
             Cursor = Cursors.Hand;
-            Height = 32;
+            Height = 40;
         }
 
         public int SelectedIndex
@@ -436,22 +652,22 @@ namespace Windkanal
             if (e.Button != MouseButtons.Left || Items.Count == 0) return;
             var menu = new ContextMenuStrip
             {
-                Renderer = new DarkMenuRenderer(), ShowImageMargin = false, ShowCheckMargin = false,
-                BackColor = Theme.Ctl, ForeColor = Theme.Text, Font = Font, Padding = new Padding(3), DropShadowEnabled = true
+                Renderer = new MenuRenderer(), ShowImageMargin = false, ShowCheckMargin = false,
+                BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.Base, Padding = new Padding(4), DropShadowEnabled = true
             };
             for (int i = 0; i < Items.Count; i++)
             {
                 int idx = i;
                 var it = new ToolStripMenuItem(Items[i])
                 {
-                    AutoSize = false, Size = new Size(Width - 6, 30), ForeColor = Theme.Text,
-                    Font = i == sel ? Theme.Semi : Font, Padding = new Padding(4, 0, 0, 0)
+                    AutoSize = false, Size = new Size(Width - 8, 34), ForeColor = Theme.Text,
+                    Font = i == sel ? Theme.Label : Theme.Base, Padding = new Padding(6, 0, 0, 0)
                 };
                 it.Click += delegate { SelectedIndex = idx; };
                 menu.Items.Add(it);
             }
             menu.Closed += delegate { Pressed = false; Invalidate(); BeginInvoke((Action)menu.Dispose); };
-            menu.Show(this, new Point(0, Height + 2));
+            menu.Show(this, new Point(0, Height + 4));
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -459,27 +675,26 @@ namespace Windkanal
             var g = e.Graphics;
             Theme.Prepare(g);
             g.Clear(BackColor);
-            var r = new RectangleF(0.5f, 0.5f, Width - 1, Height - 1);
-            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Ctl, r, 6);
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 12);
+            Theme.StrokeRound(g, Theme.Border, r, 12);
             string s = sel >= 0 && sel < Items.Count ? Items[sel] : "";
-            Theme.Draw(g, s, Font, Theme.Text, new Rectangle(10, 0, Width - 36, Height), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            // Pfeil nach unten
-            float cx = Width - 16, cy = Height / 2f;
-            using (var p = new Pen(Theme.Muted, 1.6f))
+            Theme.Draw(g, s, Font, Theme.Text, new Rectangle(14, 0, Width - 44, Height - 1), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            float cx = Width - 20, cy = Height / 2f;
+            using (var p = new Pen(Theme.Muted, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
                 g.DrawLines(p, new[] { new PointF(cx - 4, cy - 2), new PointF(cx, cy + 2), new PointF(cx + 4, cy - 2) });
         }
     }
 
-    sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
+    sealed class MenuRenderer : ToolStripProfessionalRenderer
     {
-        public DarkMenuRenderer() : base(new DarkColors()) { RoundedEdges = false; }
+        public MenuRenderer() : base(new Colors()) { RoundedEdges = false; }
 
         protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
         {
             if (!e.Item.Selected) return;
-            var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            Theme.FillRound(g, Theme.CtlHover, new RectangleF(1, 1, e.Item.Width - 2, e.Item.Height - 2), 5);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            Theme.FillRound(e.Graphics, Theme.Ctl, new RectangleF(1, 1, e.Item.Width - 2, e.Item.Height - 2), 8);
         }
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
@@ -494,19 +709,19 @@ namespace Windkanal
                 e.Graphics.DrawRectangle(p, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
         }
 
-        sealed class DarkColors : ProfessionalColorTable
+        sealed class Colors : ProfessionalColorTable
         {
-            public override Color ToolStripDropDownBackground { get { return Theme.Ctl; } }
+            public override Color ToolStripDropDownBackground { get { return Theme.Surface; } }
             public override Color MenuBorder { get { return Theme.Border; } }
             public override Color MenuItemBorder { get { return Color.Transparent; } }
-            public override Color MenuItemSelected { get { return Theme.CtlHover; } }
-            public override Color ImageMarginGradientBegin { get { return Theme.Ctl; } }
-            public override Color ImageMarginGradientMiddle { get { return Theme.Ctl; } }
-            public override Color ImageMarginGradientEnd { get { return Theme.Ctl; } }
+            public override Color MenuItemSelected { get { return Theme.Ctl; } }
+            public override Color ImageMarginGradientBegin { get { return Theme.Surface; } }
+            public override Color ImageMarginGradientMiddle { get { return Theme.Surface; } }
+            public override Color ImageMarginGradientEnd { get { return Theme.Surface; } }
         }
     }
 
-    /// <summary>Zahleneingabe (deutsches Format) mit Einheit; Pfeiltasten und Mausrad ändern den Wert.</summary>
+    /// <summary>Zahleneingabe (deutsches Format) mit Bezeichnung und Einheit; Pfeiltasten und Mausrad ändern den Wert.</summary>
     sealed class NumberBox : Painted
     {
         readonly TextBox box;
@@ -520,10 +735,10 @@ namespace Windkanal
         public NumberBox()
         {
             SetStyle(ControlStyles.Selectable, false);
-            Height = 32;
+            Height = 40;
             box = new TextBox
             {
-                BorderStyle = BorderStyle.None, BackColor = Theme.Ctl, ForeColor = Theme.Text, Font = Theme.Semi,
+                BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.Label,
                 TextAlign = HorizontalAlignment.Right
             };
             Controls.Add(box);
@@ -592,24 +807,46 @@ namespace Windkanal
 
         protected override void OnLayout(LayoutEventArgs e)
         {
-            if (box == null) return;
-            int uw = TextRenderer.MeasureText(Unit, Font).Width;
-            int cw = Caption.Length > 0 ? TextRenderer.MeasureText(Caption, Font).Width + 16 : 0;
-            box.SetBounds(10 + cw, (Height - box.PreferredHeight) / 2 + 1, Width - 26 - uw - cw, box.PreferredHeight);
             base.OnLayout(e);
+            if (box == null) return;
+            int uw = Theme.Width(Unit, Font);
+            int cw = Caption.Length > 0 ? Theme.Width(Caption, Font) + 16 : 0;
+            box.SetBounds(14 + cw, (Height - box.PreferredHeight) / 2 + 1, Width - 34 - uw - cw, box.PreferredHeight);
         }
+
+        public void Recolor() { box.BackColor = Theme.Surface; box.ForeColor = Theme.Text; Invalidate(); }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
             Theme.Prepare(g);
             g.Clear(BackColor);
-            var r = new RectangleF(0.5f, 0.5f, Width - 1, Height - 1);
-            Theme.FillRound(g, Theme.Ctl, r, 6);
-            Color border = !valid ? Color.FromArgb(235, 90, 90) : box.Focused ? Theme.Accent : Theme.Ctl;
-            Theme.StrokeRound(g, border, r, 6);
-            Theme.Draw(g, Unit, Font, Theme.Muted, new Rectangle(0, 0, Width - 10, Height), TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
-            Theme.Draw(g, Caption, Font, Theme.Muted, new Rectangle(10, 0, Width - 20, Height), TextFormatFlags.VerticalCenter);
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Theme.FillRound(g, Theme.Surface, r, 12);
+            Color border = !valid ? Theme.Pink : box.Focused ? Theme.Accent : Theme.Border;
+            Theme.StrokeRound(g, border, r, 12);
+            Theme.Draw(g, Unit, Font, Theme.Muted, new Rectangle(0, 0, Width - 14, Height - 1), TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            Theme.Draw(g, Caption, Font, Theme.Muted, new Rectangle(14, 0, Width - 28, Height - 1), TextFormatFlags.VerticalCenter);
+        }
+    }
+
+    /// <summary>Zwischenüberschrift mit feiner Linie.</summary>
+    sealed class Section : Painted
+    {
+        public Section(string text)
+        {
+            SetStyle(ControlStyles.Selectable, false);
+            Text = text;
+            Height = 20;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(BackColor);
+            Theme.Draw(g, Text, Theme.SmallMed, Theme.Muted, new Rectangle(0, 0, Width, Height), TextFormatFlags.VerticalCenter);
+            int tw = Theme.Width(Text, Theme.SmallMed);
+            using (var p = new Pen(Theme.Border)) g.DrawLine(p, tw + 10, Height / 2, Width, Height / 2);
         }
     }
 
@@ -620,6 +857,7 @@ namespace Windkanal
         {
             SetStyle(ControlStyles.Selectable, false);
             Text = text;
+            Font = Theme.Small;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -633,8 +871,7 @@ namespace Windkanal
     sealed class InfoRows : Painted
     {
         public string[] Keys = new string[0], Values = new string[0];
-        public string Note;
-        public const int Row = 22;
+        public const int Row = 26;
 
         public InfoRows() { SetStyle(ControlStyles.Selectable, false); }
 
@@ -650,57 +887,16 @@ namespace Windkanal
             {
                 var r = new Rectangle(0, y, Width, Row);
                 Theme.Draw(g, Keys[i], Font, Theme.Muted, r, TextFormatFlags.VerticalCenter);
-                Theme.Draw(g, i < Values.Length ? Values[i] : "", Theme.Semi, Theme.Text, r, TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+                Theme.Draw(g, i < Values.Length ? Values[i] : "", Theme.Label, Theme.Text, r, TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             }
-            if (Note != null)
-                Theme.Draw(g, Note, Theme.Small, Theme.Faint, new Rectangle(0, y + 2, Width, Row), TextFormatFlags.VerticalCenter);
         }
     }
 
-    /// <summary>Karte mit Überschrift; die Inhalte werden untereinander angeordnet.</summary>
-    sealed class Card : Panel
-    {
-        public const int Inset = 14;
-        readonly string title;
-        int y = 40;
-
-        public Card(string title)
-        {
-            this.title = title;
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = Theme.Chrome;
-        }
-
-        public int InnerWidth { get { return Width - 2 * Inset; } }
-
-        public T Add<T>(T c, int height, int gapAfter = 10) where T : Control
-        {
-            c.BackColor = Theme.Card;
-            c.SetBounds(Inset, y, InnerWidth, height);
-            Controls.Add(c);
-            y += height + gapAfter;
-            return c;
-        }
-
-        public void Finish() { Height = y + Inset - 10 + 4; }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            var g = e.Graphics;
-            Theme.Prepare(g);
-            g.Clear(BackColor);
-            var r = new RectangleF(0.5f, 0.5f, Width - 1, Height - 1);
-            Theme.FillRound(g, Theme.Card, r, 10);
-            Theme.StrokeRound(g, Theme.Border, r, 10);
-            Theme.Draw(g, title.ToUpper(CultureInfo.GetCultureInfo("de-DE")), Theme.Caps, Theme.Accent,
-                       new Rectangle(Inset, 12, Width - 2 * Inset, 18), TextFormatFlags.VerticalCenter);
-        }
-    }
-
-    /// <summary>Dunkles Fenster für den Hilfetext „Physik &amp; Grenzen“.</summary>
+    /// <summary>Fenster für den Hilfetext „Physik &amp; Grenzen“.</summary>
     sealed class InfoDialog : Form
     {
         readonly string[] lines;
+        const int W = 780, X = 32;
 
         public InfoDialog(string title, string text)
         {
@@ -714,9 +910,9 @@ namespace Windkanal
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterParent;
             DoubleBuffered = true;
-            ClientSize = new Size(760, Measure() + 80);
+            ClientSize = new Size(W, Flow(null) + 84);
             var ok = new FlatButton { Text = "Schließen", Primary = true, BackColor = Theme.Card };
-            ok.SetBounds(ClientSize.Width - 24 - 120, ClientSize.Height - 24 - 34, 120, 34);
+            ok.SetBounds(ClientSize.Width - X - 124, ClientSize.Height - 28 - 40, 124, 40);
             ok.Click += delegate { Close(); };
             Controls.Add(ok);
             KeyPreview = true;
@@ -729,34 +925,42 @@ namespace Windkanal
             Theme.DarkTitleBar(Handle);
         }
 
-        int Measure() { return Flow(null); }
-
         static bool IsHeader(string s) { return s.Length > 0 && s == s.ToUpperInvariant() && char.IsLetter(s[0]); }
+
+        static string Sentence(string s)
+        {
+            // "SO RECHNET DIE SIMULATION" -> "So rechnet die Simulation"
+            var parts = s.ToLower(CultureInfo.GetCultureInfo("de-DE")).Split(' ');
+            for (int i = 0; i < parts.Length; i++)
+                if (i == 0 || parts[i] == "simulation")
+                    parts[i] = parts[i].Length > 0 ? char.ToUpper(parts[i][0]) + parts[i].Substring(1) : parts[i];
+            return string.Join(" ", parts);
+        }
 
         int Flow(Graphics g)
         {
-            int y = 24, w = 760 - 56;
+            int y = 28, w = W - 2 * X;
             const TextFormatFlags flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding;
             foreach (var raw in lines)
             {
                 string s = raw.TrimEnd();
-                if (s.Length == 0) { y += 10; continue; }
+                if (s.Length == 0) { y += 14; continue; }
                 if (IsHeader(s))
                 {
-                    if (g != null) Theme.Draw(g, s, Theme.Caps, Theme.Accent, new Rectangle(28, y, w, 20), TextFormatFlags.Left);
-                    y += 24;
+                    if (g != null) Theme.Draw(g, Sentence(s), Theme.Title, Theme.Text, new Rectangle(X, y, w, 24), TextFormatFlags.Left);
+                    y += 32;
                     continue;
                 }
                 bool bullet = s.StartsWith("• ");
                 string body = bullet ? s.Substring(2) : s;
-                int x = bullet ? 44 : 28;
-                int h = TextRenderer.MeasureText(body, Font, new Size(w - (x - 28), 1000), flags).Height;
+                int x = bullet ? X + 18 : X;
+                int h = TextRenderer.MeasureText(body, Font, new Size(w - (x - X), 1000), flags).Height;
                 if (g != null)
                 {
-                    if (bullet) using (var b = new SolidBrush(Theme.Accent)) g.FillEllipse(b, 31, y + 7, 5, 5);
-                    Theme.Draw(g, body, Font, Theme.Text, new Rectangle(x, y, w - (x - 28), h), flags);
+                    if (bullet) using (var b = new SolidBrush(Theme.Accent)) g.FillEllipse(b, X + 2, y + 7, 6, 6);
+                    Theme.Draw(g, body, Font, bullet ? Theme.Text : Theme.Muted, new Rectangle(x, y, w - (x - X), h), flags);
                 }
-                y += h + 4;
+                y += h + 6;
             }
             return y;
         }

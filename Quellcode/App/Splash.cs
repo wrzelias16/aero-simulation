@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -13,10 +12,10 @@ namespace Windkanal
     /// </summary>
     sealed class Splash : Form
     {
-        const int W = 480, H = 300, Banner = 158;
+        const int W = 520, H = 330, Pad = 18, StageH = 172;
 
         // eigene Schriften, weil dieses Fenster in einem anderen Thread zeichnet als das Hauptfenster
-        readonly Font fTitle = new Font("Segoe UI Semibold", 16f), fBase = new Font("Segoe UI", 9f), fSmall = new Font("Segoe UI", 8.25f);
+        readonly Font fWord = Theme.Medium(16f), fSmall = Theme.Regular(9f), fSmallMed = Theme.Medium(8.75f);
         readonly Stopwatch clock = Stopwatch.StartNew();
         readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 15 };
         string status = "Wird gestartet …";
@@ -88,7 +87,7 @@ namespace Windkanal
                 Thread.Sleep(15);
         }
 
-        /// <summary>Langsam ausblenden und schließen (aus dem Haupt-Thread).</summary>
+        /// <summary>Ausblenden und schließen (aus dem Haupt-Thread).</summary>
         public void FadeOut()
         {
             Post(() => { closing = true; closeAt = clock.Elapsed.TotalMilliseconds; });
@@ -102,8 +101,7 @@ namespace Windkanal
         void OnTick(object sender, EventArgs e)
         {
             double now = clock.Elapsed.TotalMilliseconds;
-            // Balken läuft weich hinterher und kriecht langsam weiter, solange nichts gemeldet wird
-            if (target < 0.9f) target += 0.0008f;
+            if (target < 0.9f) target += 0.0008f;   // kriecht langsam weiter, solange nichts gemeldet wird
             shown += (target - shown) * 0.09f;
             if (closing)
             {
@@ -119,103 +117,76 @@ namespace Windkanal
         {
             var g = e.Graphics;
             Theme.Prepare(g);
-            float t = (float)(clock.Elapsed.TotalSeconds);
-            DrawBanner(g, t);
-
+            float t = (float)clock.Elapsed.TotalSeconds;
             using (var p = new Pen(Theme.Border)) g.DrawRectangle(p, 0, 0, W - 1, H - 1);
 
-            Theme.DrawLogo(g, 28, Banner + 24, 44);
-            Theme.Draw(g, "Windkanal 2D", fTitle, Theme.Text, new Rectangle(84, Banner + 20, 360, 30), TextFormatFlags.VerticalCenter);
-            Theme.Draw(g, "Lattice-Boltzmann-Strömungssimulation", fBase, Theme.Muted, new Rectangle(85, Banner + 48, 360, 20), TextFormatFlags.VerticalCenter);
+            var stage = new RectangleF(Pad, Pad, W - 2 * Pad, StageH);
+            Theme.FillRound(g, Theme.Surface, stage, 16);
+            DrawStage(g, stage, t);
 
-            // Fortschrittsbalken
-            var bar = new RectangleF(28, H - 44, W - 56, 4);
-            Theme.FillRound(g, Theme.Track, bar, 2);
-            if (shown > 0.01f)
-            {
-                var fill = new RectangleF(bar.X, bar.Y, bar.Width * Math.Min(1, shown), bar.Height);
-                Theme.FillRound(g, Theme.Accent, fill, 2);
-                // wandernder Glanz auf dem Balken
-                float gx = fill.X + (t * 260 % (fill.Width + 80)) - 40;
-                using (var shine = new LinearGradientBrush(new RectangleF(gx - 40, 0, 80, 1), Color.FromArgb(0, Color.White), Color.FromArgb(0, Color.White), 0f))
-                {
-                    var blend = new ColorBlend
-                    {
-                        Colors = new[] { Color.FromArgb(0, Color.White), Color.FromArgb(150, Color.White), Color.FromArgb(0, Color.White) },
-                        Positions = new[] { 0f, 0.5f, 1f }
-                    };
-                    shine.InterpolationColors = blend;
-                    g.SetClip(fill);
-                    g.FillRectangle(shine, gx - 40, fill.Y, 80, fill.Height);
-                    g.ResetClip();
-                }
-            }
-            Theme.Draw(g, status, fSmall, Theme.Muted, new Rectangle(28, H - 34, W - 140, 20), TextFormatFlags.VerticalCenter);
-            Theme.Draw(g, (int)Math.Round(Math.Min(1, shown) * 100) + " %", fSmall, Theme.Faint, new Rectangle(W - 128, H - 34, 100, 20),
+            int ty = Pad + StageH + 20;
+            Theme.DrawLogo(g, Pad + 2, ty, 42, Theme.Ink, Theme.OnInk);
+            Theme.Draw(g, "windkanal", fWord, Theme.Text, new Rectangle(Pad + 56, ty - 2, 240, 28), TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, "2D-Strömungssimulation", fSmall, Theme.Muted, new Rectangle(Pad + 57, ty + 24, 240, 18), TextFormatFlags.VerticalCenter);
+            string ver = "Version 1.1";
+            int vw = TextRenderer.MeasureText(ver, fSmallMed, Size.Empty, TextFormatFlags.NoPadding).Width + 20;
+            Theme.FillRound(g, Theme.Ctl, new RectangleF(W - Pad - vw, ty + 9, vw, 24), 12);
+            Theme.Draw(g, ver, fSmallMed, Theme.Muted, new Rectangle(W - Pad - vw, ty + 9, vw, 24), TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
+
+            // Fortschritt als Kapseln
+            Theme.Capsules(g, new RectangleF(Pad + 2, H - 52, W - 2 * Pad - 4, 12), 40, Math.Min(1, shown), Theme.Ink, Theme.Track);
+            Theme.Draw(g, status, fSmall, Theme.Muted, new Rectangle(Pad + 2, H - 34, W - 140, 20), TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, (int)Math.Round(Math.Min(1, shown) * 100) + " %", fSmallMed, Theme.Text, new Rectangle(W - Pad - 102, H - 34, 100, 20),
                        TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
         }
 
-        /// <summary>Animierter Mini-Windkanal: Stromlinien um einen Zylinder mit wanderndem Rauch.</summary>
-        static void DrawBanner(Graphics g, float t)
+        /// <summary>Mini-Windkanal: Stromlinien um einen Zylinder, Rauchteilchen wandern mit, dahinter pendelt die Wirbelstraße.</summary>
+        static void DrawStage(Graphics g, RectangleF r, float t)
         {
-            var r = new RectangleF(0, 0, W, Banner);
-            using (var bg = new LinearGradientBrush(r, Color.FromArgb(28, 44, 78), Color.FromArgb(12, 17, 28), 90f))
-                g.FillRectangle(bg, r);
-
-            float cx = 150, cy = Banner / 2f, rad = 20;
-            const int lines = 11;
+            var clip = g.Clip;
+            using (var path = Theme.Round(r, 16)) g.SetClip(path);
+            float cx = r.X + 130, cy = r.Y + r.Height / 2, rad = 19;
+            const int lines = 9;
             for (int i = 0; i < lines; i++)
             {
-                float y0 = 12 + (Banner - 24) * i / (lines - 1f);
-                float side = y0 < cy ? -1 : 1;
-                float dist = Math.Abs(y0 - cy);
-                float push = 34 * (float)Math.Exp(-dist * dist / 900f) + 4;
-
-                // Linie
-                var pts = new PointF[60];
+                float y0 = r.Y + 18 + (r.Height - 36) * i / (lines - 1f);
+                var pts = new PointF[64];
                 for (int k = 0; k < pts.Length; k++)
                 {
-                    float x = W * k / (pts.Length - 1f);
-                    pts[k] = new PointF(x, LineY(x, y0, side, push, cx, cy, t, i));
+                    float x = r.X + r.Width * k / (pts.Length - 1f);
+                    pts[k] = new PointF(x, LineY(x, y0, cx, cy, t));
                 }
-                using (var p = new Pen(Color.FromArgb(38, 160, 200, 255), 1f)) g.DrawLines(p, pts);
+                using (var p = new Pen(Theme.Track, 1.2f)) g.DrawLines(p, pts);
 
-                // Rauchteilchen, die entlang der Linie wandern
-                for (int k = 0; k < 9; k++)
+                for (int k = 0; k < 7; k++)
                 {
-                    float x = (t * 120 + k * (W / 8f) + i * 23) % (W + 40) - 20;
-                    float y = LineY(x, y0, side, push, cx, cy, t, i);
-                    float d = (x - cx) / 60f;
-                    float speed = 0.5f + 0.5f * (float)Math.Exp(-d * d) * (float)Math.Exp(-dist * dist / 1600f);
-                    var col = Speed(speed);
-                    float s = 2.2f + speed * 1.4f;
-                    using (var b = new SolidBrush(Color.FromArgb(70, col))) g.FillEllipse(b, x - s * 1.8f, y - s * 1.8f, s * 3.6f, s * 3.6f);
-                    using (var b = new SolidBrush(col)) g.FillEllipse(b, x - s / 2, y - s / 2, s, s);
+                    float x = r.X + ((t * 110 + k * (r.Width / 6.5f) + i * 37) % (r.Width + 30)) - 15;
+                    float y = LineY(x, y0, cx, cy, t);
+                    float d = (x - cx) / 55f, dy = (y0 - cy) / 40f;
+                    float fast = (float)(Math.Exp(-d * d) * Math.Exp(-dy * dy));
+                    float s = 4 + 2.5f * fast;
+                    Color c = fast > 0.45f ? Theme.Pink : Theme.Accent;   // schnell am Zylinder vorbei: pink
+                    using (var b = new SolidBrush(c)) g.FillEllipse(b, x - s / 2, y - s / 2, s, s);
                 }
             }
-            using (var b = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillEllipse(b, cx - rad - 5, cy - rad - 5, 2 * rad + 10, 2 * rad + 10);
-            using (var b = new SolidBrush(Color.FromArgb(230, 233, 238))) g.FillEllipse(b, cx - rad, cy - rad, 2 * rad, 2 * rad);
+            using (var b = new SolidBrush(Theme.Ink)) g.FillEllipse(b, cx - rad, cy - rad, 2 * rad, 2 * rad);
+            g.Clip = clip;
         }
 
-        static float LineY(float x, float y0, float side, float push, float cx, float cy, float t, int i)
+        static float LineY(float x, float y0, float cx, float cy, float t)
         {
-            float d = (x - cx) / 46f;
+            float d = (x - cx) / 44f;
+            float dist = y0 - cy;
+            float side = dist < 0 ? -1 : 1;
+            float push = 30 * (float)Math.Exp(-dist * dist / 900f) + 3;
             float y = y0 + side * push * (float)Math.Exp(-d * d);
             if (x > cx)   // Wirbelstraße hinter dem Zylinder
             {
-                float behind = Math.Min(1, (x - cx) / 120f);
-                float near = (float)Math.Exp(-(y0 - cy) * (y0 - cy) / 2500f);
-                y += behind * near * 9 * (float)Math.Sin(x * 0.045f - t * 5.0f);
+                float behind = Math.Min(1, (x - cx) / 110f);
+                float near = (float)Math.Exp(-dist * dist / 2500f);
+                y += behind * near * 9 * (float)Math.Sin((x - cx) * 0.045f - t * 5.0f);
             }
             return y;
-        }
-
-        static Color Speed(float v)
-        {
-            // blau -> grün -> orange, wie die Geschwindigkeitsfarben in der App
-            v = Math.Max(0, Math.Min(1, v));
-            Color a = Color.FromArgb(84, 200, 255), b = Color.FromArgb(106, 253, 98), c = Color.FromArgb(255, 159, 67);
-            return v < 0.75f ? Theme.Mix(a, b, Math.Max(0, (v - 0.5f) / 0.25f)) : Theme.Mix(b, c, (v - 0.75f) / 0.25f);
         }
     }
 }

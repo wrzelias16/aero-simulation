@@ -309,7 +309,8 @@ Idee: Ein echter Rauchkanal ist selbst ein fast zweidimensionales Experiment (Li
 - [ ] Tooltips, Hilfetexte, Einheitenwahl (m/s, km/h), Dunkel/Hell
 - [ ] Installer signieren oder als MSIX paketieren, Update-Prüfung
 - [x] Oberfläche modernisiert: dunkle Titelleiste, Kopfzeile mit Start/Pause, Karten in der Seitenleiste, eigene Regler, Schalter und Auswahllisten, Messwert-Kacheln neben dem Diagramm
-- [x] Helles und dunkles Design (Knopf mit Sonne/Mond oben rechts, folgt sonst der Windows-Einstellung, Wahl wird gemerkt), Startfenster mit Ladeanimation
+- [x] Helles und dunkles Design (Knopf mit Sonne/Mond oben rechts, Wahl wird gemerkt), Startfenster mit Ladeanimation
+- [x] Neues Layout im Dashboard-Stil: Karten mit großen Rundungen, Ansicht als Pillen-Navigation oben, Messwert-Karten mit Verlauf als Kapseln, Schrift Outfit (eingebettet)
 
 ### Phase 5 (optional, groß): 3D
 - D3Q19 oder D3Q27 auf der GPU, **STL-Import** mit Voxelisierung, Schnitt-Darstellung und Stromlinien. Gute Referenz zum Anschauen: das Open-Source-Projekt FluidX3D.
@@ -328,12 +329,13 @@ Quellcode/
   App/
     Program.cs           Einstieg
     MainForm.cs          Oberfläche, Steuerung, Zeichnen mit der Maus, Messwert-Kacheln, Diagramm
-    Ui.cs                Design (hell/dunkel): Farben, selbst gezeichnete Regler, Schalter, Auswahllisten, Karten, Hilfefenster
+    Ui.cs                Design (hell/dunkel): Farben, Schrift, selbst gezeichnete Knöpfe, Regler, Schalter, Auswahllisten, Karten, Hilfefenster
     Splash.cs            Startfenster mit Ladeanimation (eigener Thread, meldet den Ladefortschritt)
     Solver.cs            LBM-Löser (D2Q9, regularisiert, Smagorinsky), Ränder, Kräfte, ChooseU0, Reset/Kick; nutzt die GPU, wenn vorhanden
     GpuLbm.cs            derselbe Löser als OpenCL-Kernel für die Grafikkarte (P/Invoke auf OpenCL.dll)
     Shapes.cs            Formen (Polygone, NACA-Profil, Auto), Drehen/Skalieren, Rasterung
     Visuals.cs           Rauchpartikel, ForceStats (Mittelwerte, Strouhal), Renderer (Farbtabellen, Bild)
+  Fonts/                 Schrift Outfit (SIL Open Font License, siehe OFL.txt), wird beim Bauen in die .exe eingebettet
   Setup/Setup.cs         Installer und Deinstallierer in einer Datei
   Test/ValidationTest.cs Validierung gegen Literaturwerte, Stabilitätstests
 ```
