@@ -9,8 +9,10 @@ namespace Windkanal
     /// Ränder: Geschwindigkeitseinlass links, Null-Gradient-Auslass rechts mit Dämpfungszone,
     /// oben/unten wahlweise reibungsfrei (Symmetrie) oder mit Haftung,
     /// Körper per Halfway-Bounce-Back, Kräfte per Impulsaustausch-Methode.
+    /// Rechnet auf der Grafikkarte (OpenCL, <see cref="GpuLbm"/>), wenn eine da ist, sonst auf allen CPU-Kernen.
+    /// Mit der Umgebungsvariable WK_CPU=1 wird die CPU erzwungen.
     /// </summary>
-    public sealed class Solver
+    public sealed class Solver : IDisposable
     {
         public const byte FLUID = 0, BOUNDARY = 1, SOLID = 2;
 
@@ -40,13 +42,19 @@ namespace Windkanal
         /// <summary>Kraft auf den Körper im letzten Zeitschritt (Gittereinheiten).</summary>
         public double Fx, Fy;
 
+        GpuLbm gpu;
+        readonly double[] batchFx = new double[GpuLbm.MaxBatch], batchFy = new double[GpuLbm.MaxBatch];
+        /// <summary>Womit gerechnet wird, z. B. "GPU (NVIDIA GeForce RTX 5070 Ti)" oder "CPU (20 Kerne)".</summary>
+        public readonly string Backend;
+        /// <summary>Warum die GPU nicht genutzt wird (null, wenn sie genutzt wird).</summary>
+        public readonly string GpuUnavailableReason;
+        public bool OnGpu { get { return gpu != null; } }
+
         public Solver(int visibleNx, int ny)
         {
             int nx = visibleNx + visibleNx * 3 / 20;
             VisibleNX = visibleNx;
             NX = nx; NY = ny; N = nx * ny;
-            fSrc = new float[9 * N];
-            fDst = new float[9 * N];
             Flags = new byte[N];
             Solid = new bool[N];
             Rho = new float[N];
@@ -61,8 +69,25 @@ namespace Windkanal
                 float s = (x - start) / (float)(nx - 1 - start);
                 sponge[x] = s * s;
             }
+            string reason;
+            if (Environment.GetEnvironmentVariable("WK_CPU") == "1") reason = "per WK_CPU=1 abgeschaltet";
+            else gpu = GpuLbm.TryCreate(nx, ny, sponge, out reason);
+            if (gpu != null) Backend = "GPU (" + GpuLbm.DeviceName + ")";
+            else
+            {
+                GpuUnavailableReason = reason;
+                Backend = "CPU (" + Environment.ProcessorCount + " Kerne)";
+                fSrc = new float[9 * N];
+                fDst = new float[9 * N];
+            }
             RebuildFlags();
             Reset();
+        }
+
+        public void Dispose()
+        {
+            if (gpu != null) gpu.Dispose();
+            gpu = null;
         }
 
         public float Tau { get { return 3f * Nu + 0.5f; } }
@@ -98,9 +123,10 @@ namespace Windkanal
             // Start aus der Ruhe – die Anströmung fährt wie beim echten Gebläse sanft hoch.
             for (int c = 0; c < N; c++)
             {
-                SetEquilibrium(c, 1f, 0f, 0f);
+                if (gpu == null) SetEquilibrium(c, 1f, 0f, 0f);
                 Rho[c] = 1f; Ux[c] = 0f; Uy[c] = 0f;
             }
+            if (gpu != null) gpu.Reset();
         }
 
         /// <summary>
@@ -120,6 +146,7 @@ namespace Windkanal
             if (x1 < 0) return;
             float h = Math.Max(3f, y1 - y0 + 1);
             float px = x1 + h, py = (y0 + y1) / 2f, inv2s2 = 1f / (2f * h * h);
+            if (gpu != null) { gpu.Kick(px, py, inv2s2, U0); return; }
             for (int c = 0; c < N; c++)
             {
                 if (Solid[c]) continue;
@@ -152,19 +179,46 @@ namespace Windkanal
         /// <summary>Übernimmt eine neue Hindernismaske, ohne die Strömung neu zu starten.</summary>
         public void ApplyMask(bool[] mask)
         {
+            int[] changed = gpu != null ? new int[N] : null;
+            int nChanged = 0;
             for (int c = 0; c < N; c++)
             {
                 int x = c % NX;
                 bool s = mask[c] && x >= 2 && x <= VisibleNX - 3;
                 if (s == Solid[c]) continue;
                 Solid[c] = s;
-                SetEquilibrium(c, 1f, 0f, 0f);
+                if (gpu != null) changed[nChanged++] = c;
+                else SetEquilibrium(c, 1f, 0f, 0f);
                 Rho[c] = 1f; Ux[c] = 0f; Uy[c] = 0f;
             }
-            RebuildFlags();
+            RebuildFlags(changed, nChanged);
         }
 
-        void RebuildFlags()
+        void RebuildFlags(int[] changed = null, int nChanged = 0)
+        {
+            RebuildFlagsCpu();
+            if (gpu == null) return;
+            // Kraft-Slots: jede Randzelle mit Verbindung zum Körper bekommt einen Platz,
+            // die GPU summiert die Impulsaustausch-Beiträge dieser Zellen je Schritt.
+            var slotOf = new int[N];
+            int slots = 0;
+            for (int y = 0; y < NY; y++)
+                for (int x = 0; x < NX; x++)
+                {
+                    int c = y * NX + x;
+                    slotOf[c] = -1;
+                    if (Flags[c] != BOUNDARY || x < 1 || x > NX - 2) continue;
+                    for (int i = 1; i < 9; i++)
+                    {
+                        int sx = x - CX[i], sy = y - CY[i];
+                        if (sy < 0 || sy >= NY) continue;
+                        if (Solid[sy * NX + sx]) { slotOf[c] = slots++; break; }
+                    }
+                }
+            gpu.ApplyMask(Flags, slotOf, slots, changed, nChanged);
+        }
+
+        void RebuildFlagsCpu()
         {
             for (int y = 0; y < NY; y++)
             {
@@ -184,7 +238,54 @@ namespace Windkanal
             }
         }
 
+        /// <summary>Ein Zeitschritt. Fx/Fy, Rho, Ux, Uy sind danach aktuell.</summary>
         public void Step()
+        {
+            if (gpu != null) StepMany(1, null, null);
+            else StepCpu();
+        }
+
+        /// <summary>
+        /// 'count' Zeitschritte am Stück; die Kraft jedes einzelnen Schritts landet in fx/fy (dürfen null sein).
+        /// Auf der GPU laufen die Schritte ohne Warten hintereinander, Rho/Ux/Uy werden nur am Ende zurückgeholt.
+        /// </summary>
+        public void StepMany(int count, double[] fx, double[] fy)
+        {
+            if (gpu == null)
+            {
+                for (int k = 0; k < count; k++)
+                {
+                    StepCpu();
+                    if (fx != null) { fx[k] = Fx; fy[k] = Fy; }
+                }
+                return;
+            }
+            float smagK = 18f * 1.41421356f * SmagorinskyCs * SmagorinskyCs;
+            for (int done = 0; done < count; )
+            {
+                int m = Math.Min(count - done, GpuLbm.MaxBatch);
+                for (int k = 0; k < m; k++)
+                {
+                    if (Steps == RampSteps) Kick();
+                    float uIn = InletVelocity;
+                    float tau0 = Tau;
+                    float spongeAmp = Math.Max(0f, 1.0f - tau0);
+                    gpu.EnqueueStep(k, tau0, spongeAmp, smagK, uIn, NoSlipWalls);
+                    Steps++;
+                }
+                gpu.ReadForces(m, batchFx, batchFy, 0);
+                if (fx != null)
+                {
+                    Array.Copy(batchFx, 0, fx, done, m);
+                    Array.Copy(batchFy, 0, fy, done, m);
+                }
+                Fx = batchFx[m - 1]; Fy = batchFy[m - 1];
+                done += m;
+            }
+            gpu.ReadMacros(Rho, Ux, Uy);
+        }
+
+        void StepCpu()
         {
             if (Steps == RampSteps) Kick();
             float uIn = InletVelocity;

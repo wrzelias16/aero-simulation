@@ -66,7 +66,8 @@ namespace Windkanal
 
         readonly Timer timer = new Timer();
         readonly Stopwatch clock = Stopwatch.StartNew();
-        double lastUi, fpsClock, stepMsAcc, mlups, fps;
+        double lastUi, fpsClock, stepMsAcc, mlups, fps, msPerStep = 1;
+        readonly double[] batchFx = new double[500], batchFy = new double[500];
         long stepsAcc;
         int frames;
         string warning;
@@ -386,6 +387,7 @@ namespace Windkanal
         {
             bool[] oldMask = solver != null ? solver.Solid : null;
             int oldNx = solver != null ? solver.NX : 0, oldNy = solver != null ? solver.NY : 0;
+            if (solver != null) solver.Dispose();
             solver = new Solver(ResNX[resIndex], ResNY[resIndex]);
             solver.NoSlipWalls = chkWalls != null && chkWalls.Checked;
             particles = new Particles(solver.NX, solver.NY);
@@ -474,9 +476,16 @@ namespace Windkanal
                 float q = 0.5f * solver.U0 * solver.U0 * refLen;
                 do
                 {
-                    solver.Step();
-                    stats.Add((float)(solver.Fx / q), (float)(solver.Fy / q));
-                    steps++;
+                    // Pakete so groß wählen, dass sie ins Zeitbudget passen (GPU rechnet ein Paket ohne Pause durch)
+                    double left = 22 - sw.Elapsed.TotalMilliseconds;
+                    int batch = solver.OnGpu ? (int)Math.Max(1, Math.Min(batchFx.Length, 0.8 * left / Math.Max(1e-4, msPerStep))) : 1;
+                    batch = Math.Min(batch, 500 - steps);
+                    double t0 = sw.Elapsed.TotalMilliseconds;
+                    solver.StepMany(batch, batchFx, batchFy);
+                    double dt = sw.Elapsed.TotalMilliseconds - t0;
+                    msPerStep = 0.7 * msPerStep + 0.3 * dt / batch;
+                    for (int k = 0; k < batch; k++) stats.Add((float)(batchFx[k] / q), (float)(batchFy[k] / q));
+                    steps += batch;
                 } while (sw.Elapsed.TotalMilliseconds < 22 && steps < 500);
                 stepMsAcc += sw.Elapsed.TotalMilliseconds;
                 stepsAcc += steps;
@@ -559,7 +568,7 @@ namespace Windkanal
                 "Versperrung      = " + F(100.0 * frontalCells / solver.NY, "0.0") + " %\n" +
                 "Bezugslänge = " + F(refLen, "0") + " Zellen (" + Shapes.RefName(shape) + ")\n" +
                 "Zeit t·U/L  = " + F(tStar, "0.0") + avg + "\n" +
-                "Leistung    = " + F(mlups, "0") + " MLUPS · " + F(fps, "0") + " FPS";
+                "Leistung    = " + F(mlups, "0") + " MLUPS · " + F(fps, "0") + " FPS · " + (solver.OnGpu ? "GPU" : "CPU");
 
             double Lm = (double)numMeters.Value;
             double v = reynolds * NuAir / Lm;
@@ -602,7 +611,7 @@ namespace Windkanal
             }
             status.ForeColor = CMuted;
             status.Text = text.Length > 0 ? text
-                : (running ? "Läuft" : "Pausiert") + "   ·   Leertaste = Start/Pause   ·   Maus links = Wand zeichnen, rechts = radieren";
+                : (running ? "Läuft" : "Pausiert") + " auf " + solver.Backend + "   ·   Leertaste = Start/Pause   ·   Maus links = Wand zeichnen, rechts = radieren";
         }
 
         void OnViewPaint(object sender, PaintEventArgs e)

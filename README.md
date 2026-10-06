@@ -3,8 +3,9 @@
 Virtueller 2D-Windkanal für Windows: Strömung um Zylinder, Tragflächen, ein Auto-Profil oder eigene
 Formen, mit Rauchlinien, Druck- und Wirbelansicht sowie Messwerten für Widerstand und Auftrieb.
 
-**Stand:** Version 1 (CPU) ist fertig und läuft. Version 2 (GPU, echter Rauch, genauere Randbedingung) ist
-geplant und unten Schritt für Schritt beschrieben, damit man auf einem anderen PC direkt weitermachen kann.
+**Stand:** Version 1 ist fertig und läuft. Die Strömungsrechnung läuft jetzt auf der **Grafikkarte (OpenCL)**, wenn eine da ist,
+sonst wie bisher auf allen CPU-Kernen. Bedienung und Ergebnisse sind gleich geblieben (siehe Abschnitt 4).
+Der Rest von Version 2 (echter Rauch, genauere Randbedingung) ist unten Schritt für Schritt beschrieben.
 
 ## Inhalt
 
@@ -36,12 +37,10 @@ Quellcode\bin\Windkanal2D.exe
 
 Danach liegen `Windkanal2D-Setup.exe` und `Windkanal2D-Deinstallieren.exe` im Projektordner.
 
-**Für die GPU-Version zusätzlich installieren:**
-
-```powershell
-winget install Microsoft.DotNet.SDK.8      # .NET 8 SDK (auf dem Entwicklungs-PC war nur die Runtime, kein SDK)
-winget install Microsoft.VisualStudioCode  # oder Visual Studio 2022 Community
-```
+**GPU:** Es muss nichts zusätzlich installiert werden. Die GPU-Rechnung nutzt OpenCL, das in jedem aktuellen
+Grafiktreiber (NVIDIA, AMD, Intel) steckt (`C:\Windows\System32\OpenCL.dll`). Findet die App keine nutzbare GPU,
+rechnet sie automatisch auf der CPU. Unten in der Statuszeile steht, womit gerade gerechnet wird.
+Zum Vergleichen kann man die CPU erzwingen: vor dem Start `$env:WK_CPU = "1"` setzen.
 
 **Reihenfolge am neuen PC (empfohlen):**
 
@@ -111,7 +110,12 @@ Datei: `Quellcode/App/Solver.cs`. Alles in **Gittereinheiten** (Δx = Δt = 1, D
 - **Kollision:** BGK mit lokaler Relaxationszeit, Nicht-Gleichgewichtsanteil **regularisiert**: nur der physikalische Spannungstensor (pxx, pyy, pxy) wird zurückgeführt.
 - **Turbulenz:** Smagorinsky-LES, Cs = 0,1. Lokale Relaxationszeit `tauE = 0.5·(tau + sqrt(tau² + 18·√2·Cs²·|Π|/ρ))` mit |Π| aus dem Nicht-Gleichgewichts-Spannungstensor.
 - **Viskosität:** ν = U0·L/Re, tau = 3ν + 0,5. U0 wird so gewählt, dass tau höchstens ca. 1,5 bleibt und die Mach-Zahl klein ist.
-- **Parallelisierung:** `Parallel.For` über die Gitterzeilen, Kernel mit `unsafe`-Zeigern. Rund 55 bis 70 MLUPS (Millionen Zellen-Updates pro Sekunde) auf 12 Kernen.
+- **Parallelisierung (CPU):** `Parallel.For` über die Gitterzeilen, Kernel mit `unsafe`-Zeigern. Rund 55 bis 70 MLUPS (Millionen Zellen-Updates pro Sekunde) auf 12 Kernen, 330 bis 650 MLUPS auf 20 Kernen (Core Ultra 7 265KF).
+- **GPU (`GpuLbm.cs`):** OpenCL über P/Invoke direkt auf `OpenCL.dll`, kein SDK und keine Zusatzpakete. Die Kernel sind eine 1:1-Übersetzung
+  von `StepRow`, Einlass/Auslass, `Reset`, `ApplyMask` und `Kick` (gleiche Formeln, gleiche Reihenfolge, `FP_CONTRACT OFF`, korrekt gerundete
+  Division/Wurzel, Kräfte in `double`). Je Schritt laufen zwei Kernel ohne Warten hintereinander; die Kräfte jedes Schritts werden pro Paket
+  (bis 512 Schritte) auf der GPU summiert und zusammen zurückgelesen, Dichte und Geschwindigkeit einmal pro Paket für Anzeige und Rauch.
+  Die App wählt die Paketgröße so, dass ein Bild im Zeitbudget von 22 ms bleibt. `Solver.StepMany` ist die Schnittstelle dafür.
 
 ### Ränder
 | Rand | Behandlung |
@@ -144,12 +148,12 @@ Rauchpartikel werden als Punkte gezeichnet. **Alles läuft auf der CPU**, das is
 
 Testprogramm: `Quellcode/Test/ValidationTest.cs`. Bauen und starten:
 
+`build.ps1` baut den Test mit (`Quellcode\bin\ValidationTest.exe`). Die erste Zeile der Ausgabe sagt, ob auf GPU oder CPU gerechnet wird.
+
 ```powershell
-$src = "Quellcode"
-& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll `
-  /out:ValidationTest.exe "$src\App\Solver.cs" "$src\App\Shapes.cs" "$src\App\Visuals.cs" "$src\Test\ValidationTest.cs"
-.\ValidationTest.exe                          # komplette Reihe (dauert ca. 15 bis 25 Minuten)
-.\ValidationTest.exe 900 360 30 100 30000     # Einzelfall: sichtbares nx ny D Re Schritte
+Quellcode\bin\ValidationTest.exe                          # komplette Reihe (GPU: ca. 1 Minute, CPU: einige Minuten)
+Quellcode\bin\ValidationTest.exe 900 360 30 100 30000     # Einzelfall: sichtbares nx ny D Re Schritte
+$env:WK_CPU = "1"; Quellcode\bin\ValidationTest.exe       # dieselbe Reihe auf der CPU (zum Vergleich)
 ```
 
 ### Zylinder (Literatur: Re = 100, Kármánsche Wirbelstraße, kaum Versperrung: St ≈ 0,164 bis 0,167, cw ≈ 1,33 bis 1,40)
@@ -179,6 +183,25 @@ Wichtig: Bei Re = 20.000 sind 2D-Werte nur Richtwerte (echte Turbulenz ist 3D).
 ### Geschwindigkeit
 Ca. 50 bis 70 MLUPS bei den Testgittern. Die Werte von 16 bis 18 MLUPS bei den 40- und 60-%-Versperrungsfällen wurden gemessen, während
 andere Testprozesse parallel liefen, sie sind daher kein Maß für die reine Geschwindigkeit.
+
+### GPU gegen CPU (gemessen am 06.10.2026, RTX 5070 Ti und Core Ultra 7 265KF mit 20 Kernen)
+
+Komplette Reihe einmal mit dem alten Stand (nur CPU) und einmal mit dem neuen Stand auf der GPU. **Alle cw-, ca- und St-Werte
+stimmen auf alle angezeigten Stellen überein** (z. B. Re = 100, 8 %: cw = 1,496, St = 0,174 in beiden). Die CPU-Werte schwanken
+auf diesem PC von Lauf zu Lauf um etwa ±20 %.
+
+| Fall | Gitter (mit Beruhigung) | CPU vorher | GPU nachher | Faktor |
+|---|---|---|---|---|
+| Zylinder 40 %, Re = 20.000 | 460×160 | 489 MLUPS | 3467 MLUPS | ca. 7× |
+| Quadrat 60 %, Re = 20.000 | 460×160 | 503 MLUPS | 3572 MLUPS | ca. 7× |
+| Zylinder, Re = 20.000 | 690×240 | 568 MLUPS | 6154 MLUPS | ca. 11× |
+| NACA 4412, 15°, Re = 20.000 | 690×240 | 542 MLUPS | 6219 MLUPS | ca. 11× |
+| Zylinder Re = 100, 8 % | 1035×360 | 649 MLUPS | 11394 MLUPS | ca. 17× |
+| Zylinder Re = 100, 4 % | 1380×480 | 627 MLUPS | 8101 MLUPS | ca. 13× |
+| Zylinder Re = 20, 8 % | 1035×360 | 652 MLUPS | 11332 MLUPS | ca. 17× |
+
+Kleine Gitter nutzen die GPU nicht voll aus (die Zeit pro Schritt wird dort vom Starten der Kernel bestimmt), große umso besser.
+In der App (600×240, Zylinder) zeigt die Anzeige ca. 6500 MLUPS und 46 FPS.
 
 ---
 
@@ -210,9 +233,9 @@ Ziele: **(a)** Simulation auf der GPU, **(b)** echter Rauch wie in einem Rauchka
 Reihenfolge ist Absicht: GPU zuerst, weil feiner Rauch und hohe Auflösung auf der CPU nicht flüssig laufen würden.
 
 ### Phase 0: Vorbereitung am neuen PC
-- [ ] Repo klonen, Version 1 bauen, Validierungsreihe laufen lassen, Zahlen notieren (Referenzwerte für Phase 1)
-- [ ] .NET 8 SDK installieren, neues Projekt anlegen (Vorschlag: `Quellcode-GPU/` neben `Quellcode/`, Version 1 bleibt als Referenz bestehen)
-- [ ] Entscheidung zur GPU-Technik treffen (siehe Tabelle unten)
+- [x] Repo klonen, Version 1 bauen, Validierungsreihe laufen lassen, Zahlen notieren (Referenzwerte für Phase 1)
+- [x] ~~.NET 8 SDK installieren, neues Projekt anlegen~~ nicht nötig: die GPU-Rechnung steckt im bestehenden Projekt, die CPU-Rechnung bleibt als Referenz und Ersatz erhalten
+- [x] Entscheidung zur GPU-Technik: **OpenCL direkt über `OpenCL.dll`** (im Grafiktreiber enthalten, funktioniert mit dem vorhandenen `csc.exe` ohne SDK und ohne NuGet-Pakete)
 
 ### Phase 1: GPU-Port der Strömungsrechnung  (größter Gewinn)
 
@@ -228,14 +251,14 @@ Reihenfolge ist Absicht: GPU zuerst, weil feiner Rauch und hohe Auflösung auf d
 Oberfläche: Windows Forms bleibt möglich, die GPU-Darstellung kommt in ein Steuerelement mit eigener Swapchain.
 
 **Umsetzung:**
-- [ ] Datenlayout wie in V1 (Struct-of-Arrays, `f[i*N + zelle]`, zwei Puffer). Je Zelle 9 Floats in 2 Puffern = 72 Byte.
-- [ ] Ein Kernel für **Streaming + Kollision** (1:1 aus `Solver.StepRow` übersetzt: regularisiert, Smagorinsky, Bounce-Back, Impulsaustausch)
-- [ ] Kleine Kernel für Einlass, Auslass, Beruhigungsstrecke (wie in `Solver.Step`)
-- [ ] **Kräfte:** Impulsaustausch je Randzelle in einen Puffer schreiben, dann Reduktion. Direct3D 11 hat keine Float-Atomics, daher entweder Festkomma mit `InterlockedAdd` oder zweistufige Reduktion.
+- [x] Datenlayout wie in V1 (Struct-of-Arrays, `f[i*N + zelle]`, zwei Puffer). Je Zelle 9 Floats in 2 Puffern = 72 Byte.
+- [x] Ein Kernel für **Streaming + Kollision** (1:1 aus `Solver.StepRow` übersetzt: regularisiert, Smagorinsky, Bounce-Back, Impulsaustausch)
+- [x] Kleine Kernel für Einlass, Auslass, Beruhigungsstrecke (wie in `Solver.Step`)
+- [x] **Kräfte:** Impulsaustausch je Randzelle in einen Puffer (ein Platz je Randzelle und Schritt), dann Reduktion in `double` je Schritt.
 - [ ] **Darstellung direkt aus den GPU-Puffern**: Pixel-Shader oder Compute-Kernel färbt Geschwindigkeit/Druck/Wirbel mit denselben Farbtabellen wie V1.
-- [ ] Mehrere Rechenschritte pro Bild (einstellbar), damit die GPU ausgelastet ist.
-- [ ] Körper-Maske und Anstellwinkel weiterhin auf der CPU erzeugen (Rasterung aus `Shapes.cs`), nur die Maske zur GPU kopieren.
-- [ ] **Regressionstest:** gleiche Fälle wie in Abschnitt 4 auf GPU und CPU rechnen, cw und St müssen innerhalb von 1 % übereinstimmen. Erst dann weiterbauen.
+- [x] Mehrere Rechenschritte pro Bild (automatisch nach Zeitbudget, wie bisher höchstens 500), damit die GPU ausgelastet ist. Rauchpartikel werden dafür in Teilschritten bewegt.
+- [x] Körper-Maske und Anstellwinkel weiterhin auf der CPU erzeugen (Rasterung aus `Shapes.cs`), nur die Maske zur GPU kopieren.
+- [x] **Regressionstest:** gleiche Fälle wie in Abschnitt 4 auf GPU und CPU rechnen, cw und St müssen innerhalb von 1 % übereinstimmen. Erst dann weiterbauen.
 - [ ] Neue Auflösungsstufen: bis ca. 2400×960 (sichtbar), Auswahl wie bisher.
 
 **Leistungs-Abschätzung (Rechnung, nicht gemessen):**
@@ -300,11 +323,12 @@ Idee: Ein echter Rauchkanal ist selbst ein fast zweidimensionales Experiment (Li
 .gitignore
 README.md
 Quellcode/
-  build.ps1              Baut App + Installer (ruft csc.exe von .NET Framework 4.8 auf, erzeugt auch das Icon)
+  build.ps1              Baut App + Installer + ValidationTest.exe (ruft csc.exe von .NET Framework 4.8 auf, erzeugt auch das Icon)
   App/
     Program.cs           Einstieg
     MainForm.cs          Oberfläche, Steuerung, Zeichnen mit der Maus, Messwert-Anzeige, Diagramm
-    Solver.cs            LBM-Löser (D2Q9, regularisiert, Smagorinsky), Ränder, Kräfte, ChooseU0, Reset/Kick
+    Solver.cs            LBM-Löser (D2Q9, regularisiert, Smagorinsky), Ränder, Kräfte, ChooseU0, Reset/Kick; nutzt die GPU, wenn vorhanden
+    GpuLbm.cs            derselbe Löser als OpenCL-Kernel für die Grafikkarte (P/Invoke auf OpenCL.dll)
     Shapes.cs            Formen (Polygone, NACA-Profil, Auto), Drehen/Skalieren, Rasterung
     Visuals.cs           Rauchpartikel, ForceStats (Mittelwerte, Strouhal), Renderer (Farbtabellen, Bild)
   Setup/Setup.cs         Installer und Deinstallierer in einer Datei
@@ -312,7 +336,7 @@ Quellcode/
 ```
 
 **Build-Hinweise**
-- `build.ps1` braucht **kein .NET SDK**. Es nutzt `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. Dieser Compiler versteht nur ältere C#-Syntax (etwa C# 5), also zum Beispiel kein `?.` und keine String-Interpolation `$"..."`. Für die GPU-Version mit .NET 8 entfällt diese Einschränkung.
+- `build.ps1` braucht **kein .NET SDK**. Es nutzt `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. Dieser Compiler versteht nur ältere C#-Syntax (etwa C# 5), also zum Beispiel kein `?.` und keine String-Interpolation `$"..."`. Das gilt auch für `GpuLbm.cs`; der OpenCL-Kernel steht dort als Text und wird beim Start vom Grafiktreiber übersetzt.
 - Die App ist 64-Bit (`/platform:x64`), `unsafe` ist aktiviert, `System.Windows.Forms` und `System.Drawing` werden gebraucht.
 - Ergebnisse: `Quellcode/bin/Windkanal2D.exe`, `Quellcode/bin/Setup.exe`, im Projektordner `Windkanal2D-Setup.exe` und `Windkanal2D-Deinstallieren.exe`. Alle `.exe` sind per `.gitignore` ausgeschlossen.
 
@@ -335,7 +359,7 @@ Eine einzige `Setup.cs`, die App ist als eingebettete Ressource (`Payload.Windka
 Diesen Text in eine neue Sitzung im geklonten Ordner einfügen:
 
 > Lies README.md komplett, besonders Abschnitt 3 (Technik), 4 (Validierung) und 6 (Roadmap). Das Projekt ist ein 2D-Windkanal
-> (Lattice-Boltzmann), Version 1 läuft auf der CPU. Wir bauen jetzt Version 2 auf der GPU. Fang mit Phase 0 an: Version 1 bauen,
-> Validierungstest laufen lassen und die Zahlen mit Abschnitt 4 vergleichen. Danach .NET-8-Projekt mit Direct3D-11-Compute-Shadern
-> (Vortice.Windows) anlegen und den Löser aus Solver.cs übersetzen. Wichtig: GPU und CPU müssen bei cw und St innerhalb von 1 %
-> übereinstimmen, bevor wir Rauch und Bouzidi angehen. Antworte auf Deutsch.
+> (Lattice-Boltzmann), die Strömungsrechnung läuft per OpenCL auf der GPU (GpuLbm.cs) mit CPU-Ersatz (Solver.cs). Bauen,
+> Validierungstest auf GPU und CPU (WK_CPU=1) laufen lassen und die Zahlen mit Abschnitt 4 vergleichen. Danach mit dem Rest von
+> Phase 1 weitermachen (Darstellung direkt auf der GPU, höhere Auflösungen). Wichtig: GPU und CPU müssen bei cw und St innerhalb
+> von 1 % übereinstimmen, bevor wir Rauch und Bouzidi angehen. Antworte auf Deutsch.

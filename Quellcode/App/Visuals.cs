@@ -41,27 +41,41 @@ namespace Windkanal
 
         public void Update(Solver s, float dt, float maxAge)
         {
+            // Bei vielen Rechenschritten pro Bild (GPU) in Teilschritten bewegen, damit ein Partikel
+            // pro Teilschritt höchstens etwa eine Zelle weit fliegt und der Strömung genau folgt.
+            float maxSub = 1.5f / Math.Max(1e-3f, s.U0);
+            int subs = Math.Max(1, (int)Math.Ceiling(dt / maxSub));
+            for (int k = 0; k < subs; k++) Advance(s, dt / subs, maxAge);
+        }
+
+        void Advance(Solver s, float dt, float maxAge)
+        {
             int nx = s.NX, ny = s.NY;
-            int i = 0;
-            while (i < Count)
+            float[] X = this.X, Y = this.Y, Age = this.Age;
+            Parallel.For(0, (Count + 2047) / 2048, chunk =>
             {
-                float x = X[i], y = Y[i], u1, v1, u2, v2;
-                Sample(s, x, y, out u1, out v1);
-                Sample(s, x + 0.5f * dt * u1, y + 0.5f * dt * v1, out u2, out v2);
-                x += dt * u2; y += dt * v2;
-                float age = Age[i] + dt;
-                int cx = (int)(x + 0.5f), cy = (int)(y + 0.5f);
-                bool dead = x < 0 || x >= s.VisibleNX - 1 || y < 0 || y >= ny - 1 || age > maxAge
-                            || s.Solid[Math.Min(ny - 1, cy) * nx + Math.Min(nx - 1, cx)];
-                if (dead)
+                int end = Math.Min(Count, (chunk + 1) * 2048);
+                for (int i = chunk * 2048; i < end; i++)
                 {
-                    Count--;
-                    X[i] = X[Count]; Y[i] = Y[Count]; Age[i] = Age[Count];
-                    continue;
+                    float x = X[i], y = Y[i], u1, v1, u2, v2;
+                    Sample(s, x, y, out u1, out v1);
+                    Sample(s, x + 0.5f * dt * u1, y + 0.5f * dt * v1, out u2, out v2);
+                    x += dt * u2; y += dt * v2;
+                    float age = Age[i] + dt;
+                    int cx = (int)(x + 0.5f), cy = (int)(y + 0.5f);
+                    bool dead = x < 0 || x >= s.VisibleNX - 1 || y < 0 || y >= ny - 1 || age > maxAge
+                                || s.Solid[Math.Min(ny - 1, cy) * nx + Math.Min(nx - 1, cx)];
+                    X[i] = x; Y[i] = y; Age[i] = dead ? float.NaN : age;
                 }
-                X[i] = x; Y[i] = y; Age[i] = age;
-                i++;
+            });
+            int alive = 0;
+            for (int i = 0; i < Count; i++)
+            {
+                if (float.IsNaN(Age[i])) continue;
+                X[alive] = X[i]; Y[alive] = Y[i]; Age[alive] = Age[i];
+                alive++;
             }
+            Count = alive;
 
             emitAcc += s.U0 * dt;
             const float spacing = 0.6f;

@@ -8,6 +8,9 @@ namespace Windkanal
     {
         static void Main(string[] args)
         {
+            using (var probe = new Solver(40, 16))
+                Console.WriteLine("Rechnet auf: " + probe.Backend
+                    + (probe.GpuUnavailableReason != null ? " (GPU nicht genutzt: " + probe.GpuUnavailableReason + ")" : ""));
             if (args.Length == 5)
             {
                 var ci = System.Globalization.CultureInfo.InvariantCulture;
@@ -27,7 +30,11 @@ namespace Windkanal
         static void Run(string name, int nx, int ny, float d, double re, int steps,
                         ShapeKind kind = ShapeKind.Zylinder, float angle = 0)
         {
-            var s = new Solver(nx, ny);
+            using (var s = new Solver(nx, ny)) RunCase(s, name, nx, ny, d, re, steps, kind, angle);
+        }
+
+        static void RunCase(Solver s, string name, int nx, int ny, float d, double re, int steps, ShapeKind kind, float angle)
+        {
             float pivotX = nx * 0.25f;
             nx = s.NX;
             var mask = new bool[nx * ny];
@@ -44,12 +51,20 @@ namespace Windkanal
             double q = 0.5 * s.U0 * s.U0 * d;
             var cd = new double[steps];
             var cl = new double[steps];
+            var fxs = new double[100];
+            var fys = new double[100];
             var sw = Stopwatch.StartNew();
-            for (int t = 0; t < steps; t++)
+            for (int t0 = 0; t0 < steps; t0 += 100)
             {
-                s.Step();
-                cd[t] = s.Fx / q; cl[t] = s.Fy / q;
-                if (t % 100 == 0 || !s.IsStable())
+                // in Paketen zu 100 Schritten rechnen (auf der GPU ohne Warten zwischen den Schritten)
+                int m = Math.Min(100, steps - t0);
+                s.StepMany(m, fxs, fys);
+                int t = t0 + m - 1;
+                for (int k = 0; k < m; k++)
+                {
+                    cd[t0 + k] = fxs[k] / q; cl[t0 + k] = fys[k] / q;
+                    if (double.IsNaN(fxs[k]) || double.IsInfinity(fxs[k])) { t = t0 + k; break; }
+                }
                 {
                     float umax = 0; int at = 0;
                     for (int c = 0; c < s.N; c++)
@@ -57,7 +72,7 @@ namespace Windkanal
                         float u = (float)Math.Sqrt(s.Ux[c] * s.Ux[c] + s.Uy[c] * s.Uy[c]);
                         if (!(u <= umax)) { umax = u; at = c; if (float.IsNaN(u)) break; }
                     }
-                    if (Environment.GetEnvironmentVariable("WK_DIAG") == "1" && t % 100 == 0)
+                    if (Environment.GetEnvironmentVariable("WK_DIAG") == "1")
                         Console.WriteLine("  t=" + t + " umax=" + umax.ToString("0.000") + " bei x=" + (at % nx) + " y=" + (at / nx));
                     if (!s.IsStable())
                     {

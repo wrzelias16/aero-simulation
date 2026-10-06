@@ -68,6 +68,13 @@ $app = Join-Path $bin 'Windkanal2D.exe'
     (Join-Path $root 'App\*.cs')
 if ($LASTEXITCODE -ne 0) { throw 'App-Build fehlgeschlagen' }
 
+# --- Validierungstest (Konsole) ---
+$test = Join-Path $bin 'ValidationTest.exe'
+& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /out:$test `
+    (Join-Path $root 'App\Solver.cs') (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') `
+    (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'Test\ValidationTest.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Test-Build fehlgeschlagen' }
+
 # --- Installer (App als eingebettete Ressource) ---
 $setup = Join-Path $bin 'Setup.exe'
 & $csc /nologo /target:winexe /optimize+ /win32icon:$ico `
