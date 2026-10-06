@@ -7,28 +7,8 @@ using System.Windows.Forms;
 
 namespace Windkanal
 {
-    sealed class Canvas : Control
-    {
-        public Canvas()
-        {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
-                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-        }
-    }
-
     public sealed class MainForm : Form
     {
-        static readonly Color CBg = Color.FromArgb(18, 21, 26);
-        static readonly Color CPanel = Color.FromArgb(29, 33, 40);
-        static readonly Color CCtl = Color.FromArgb(42, 47, 56);
-        static readonly Color CBorder = Color.FromArgb(62, 68, 80);
-        static readonly Color CText = Color.FromArgb(226, 229, 234);
-        static readonly Color CMuted = Color.FromArgb(145, 152, 164);
-        static readonly Color CAccent = Color.FromArgb(77, 163, 255);
-        static readonly Color CWarn = Color.FromArgb(255, 196, 87);
-        static readonly Color CCd = Color.FromArgb(255, 159, 67);
-        static readonly Color CCl = Color.FromArgb(84, 200, 255);
-
         static readonly int[] ResNX = { 400, 600, 900, 1200 };
         static readonly int[] ResNY = { 160, 240, 360, 480 };
         static readonly string[] ResNames =
@@ -54,15 +34,19 @@ namespace Windkanal
         bool running = true, showSmoke = true, dirty = true, suppress;
         ViewMode viewMode = ViewMode.Geschwindigkeit;
 
-        Canvas view, graph;
-        Label status, lblAngle, lblSize, lblRe, lblResults, lblPhys, lblHint;
-        ComboBox cbShape, cbRes, cbView;
-        TrackBar tbAngle, tbSize, tbRe;
-        CheckBox chkSmoke, chkWalls;
-        Button btnRun;
-        NumericUpDown numMeters;
+        Canvas view, graph, header, statusBar;
+        DropDown cbShape, cbRes, cbView;
+        FlatSlider tbAngle, tbSize, tbRe;
+        Toggle chkSmoke, chkWalls;
+        FlatButton btnRun, btnReset, btnInfo;
+        NumberBox numMeters;
+        InfoRows rowsGeo, rowsPhys;
         Panel side;
-        int layoutY;
+
+        // Messwerte für die Kacheln und die Statusleiste
+        string tCd = "–", tCdAvg = "", tCl = "–", tClAvg = "", tLd = "–", tSt = "–", tSettle = "", perfText = "";
+        string statusText = "";
+        bool statusWarn;
 
         readonly Timer timer = new Timer();
         readonly Stopwatch clock = Stopwatch.StartNew();
@@ -82,11 +66,11 @@ namespace Windkanal
             Text = "Windkanal 2D";
             var wa = Screen.PrimaryScreen.WorkingArea;
             ClientSize = new Size(Math.Min(1480, wa.Width - 40), Math.Min(940, wa.Height - 60));
-            MinimumSize = new Size(1040, 680);
+            MinimumSize = new Size(1100, 720);
             StartPosition = FormStartPosition.CenterScreen;
-            BackColor = CBg;
-            ForeColor = CText;
-            Font = new Font("Segoe UI", 9f);
+            BackColor = Theme.Bg;
+            ForeColor = Theme.Text;
+            Font = Theme.Base;
             KeyPreview = true;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -101,11 +85,17 @@ namespace Windkanal
             KeyDown += OnKey;
         }
 
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Theme.DarkTitleBar(Handle);
+        }
+
         // ------------------------------------------------------------------ UI
 
         void BuildUi()
         {
-            view = new Canvas { Dock = DockStyle.Fill, BackColor = CBg, Cursor = Cursors.Cross };
+            view = new Canvas { Dock = DockStyle.Fill, BackColor = Theme.Bg, Cursor = Cursors.Cross };
             view.Paint += OnViewPaint;
             view.Resize += delegate { dirty = true; };
             view.MouseDown += OnViewMouseDown;
@@ -113,69 +103,78 @@ namespace Windkanal
             view.MouseUp += delegate { drawButton = 0; hasLastDraw = false; };
             view.MouseLeave += delegate { mouse = new Point(-1, -1); UpdateStatus(); };
 
-            graph = new Canvas { Dock = DockStyle.Bottom, Height = 160, BackColor = CPanel };
+            graph = new Canvas { Dock = DockStyle.Bottom, Height = 196, BackColor = Theme.Chrome };
             graph.Paint += OnGraphPaint;
 
-            status = new Label
-            {
-                Dock = DockStyle.Bottom, Height = 28, BackColor = Color.FromArgb(23, 26, 32), ForeColor = CMuted,
-                TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0)
-            };
+            statusBar = new Canvas { Dock = DockStyle.Bottom, Height = 30, BackColor = Theme.Chrome };
+            statusBar.Paint += OnStatusPaint;
 
-            side = new Panel { Dock = DockStyle.Right, Width = 330, BackColor = CPanel, AutoScroll = true };
+            header = new Canvas { Dock = DockStyle.Top, Height = 60, BackColor = Theme.Chrome };
+            header.Paint += OnHeaderPaint;
+            header.Resize += delegate { LayoutHeader(); };
+            btnRun = new FlatButton { Text = "Pause", Icon = "", Primary = true, BackColor = Theme.Chrome };
+            btnReset = new FlatButton { Text = "Neu starten", Icon = "", BackColor = Theme.Chrome };
+            btnInfo = new FlatButton { Text = "Physik & Grenzen", Icon = "", BackColor = Theme.Chrome };
+            header.Controls.AddRange(new Control[] { btnRun, btnReset, btnInfo });
+            btnRun.Click += delegate { SetRunning(!running); };
+            btnReset.Click += delegate { ResetFlow(); };
+            btnInfo.Click += delegate { ShowInfo(); };
+
+            side = new Panel { Dock = DockStyle.Right, Width = 340, BackColor = Theme.Chrome, AutoScroll = true };
+            side.HandleCreated += delegate { Theme.DarkScrollbars(side.Handle); };
+            side.Paint += (s, e) =>
+            {
+                using (var p = new Pen(Theme.Border)) e.Graphics.DrawLine(p, 0, 0, 0, side.Height);
+            };
 
             Controls.Add(view);
             Controls.Add(graph);
-            Controls.Add(status);
+            Controls.Add(statusBar);
             Controls.Add(side);
+            Controls.Add(header);
 
-            layoutY = 16;
-            var title = AddLabel("Windkanal 2D", 30);
-            title.Font = new Font("Segoe UI Semibold", 15f);
-            var sub = AddLabel("Lattice-Boltzmann-Strömungssimulation", 18);
-            sub.ForeColor = CMuted;
-            layoutY += 6;
+            int y = 14;
 
-            AddHeader("OBJEKT");
-            cbShape = AddCombo();
+            // --- Objekt
+            var card = NewCard("Objekt", ref y);
+            cbShape = card.Add(new DropDown(), 32, 14);
             foreach (var k in Shapes.All) cbShape.Items.Add(Shapes.Name(k));
             cbShape.SelectedIndex = 0;
             cbShape.SelectedIndexChanged += OnShapeChanged;
 
-            lblAngle = AddLabel("", 18);
-            tbAngle = AddTrack(-90, 90, 0);
+            tbAngle = card.Add(new FlatSlider { Text = "Anstellwinkel", Minimum = -90, Maximum = 90 }, 44, 8);
             tbAngle.ValueChanged += delegate
             {
                 angleDeg = tbAngle.Value; UpdateSliderLabels();
                 if (!suppress) RebuildGeometry(false);
             };
-            lblSize = AddLabel("", 18);
-            tbSize = AddTrack(4, 60, sizePercent);
+            tbSize = card.Add(new FlatSlider { Text = "Größe (Anteil der Tunnelhöhe)", Minimum = 4, Maximum = 60, Value = sizePercent }, 44, 8);
             tbSize.ValueChanged += delegate
             {
                 sizePercent = tbSize.Value; UpdateSliderLabels();
                 if (!suppress) RebuildGeometry(false);
             };
-            var btnClear = AddButton("Leere Fläche zum Zeichnen", 280);
+            rowsGeo = card.Add(new InfoRows(), 2 * InfoRows.Row, 12);
+            var btnClear = card.Add(new FlatButton { Text = "Leere Fläche zum Zeichnen", Icon = "" }, 32, 4);
             btnClear.Click += delegate
             {
                 customMask = new bool[solver.N];
                 SelectShape(ShapeKind.Eigene);
                 RebuildGeometry(true);
             };
-            lblHint = AddLabel("Mit der Maus direkt ins Bild zeichnen:\nlinke Taste = Wand, rechte Taste = radieren.", 34);
-            lblHint.ForeColor = CMuted;
+            card.Finish();
+            y += card.Height + 12;
 
-            AddHeader("STRÖMUNG");
-            lblRe = AddLabel("", 18);
-            tbRe = AddTrack(0, 200, ReToSlider(reynolds));
+            // --- Strömung
+            card = NewCard("Strömung", ref y);
+            tbRe = card.Add(new FlatSlider { Text = "Reynoldszahl Re", Minimum = 0, Maximum = 200, Value = ReToSlider(reynolds) }, 44, 12);
             tbRe.ValueChanged += delegate
             {
                 reynolds = SliderToRe(tbRe.Value); UpdateSliderLabels();
                 if (!suppress) { UpdateFlowParams(); stats.Clear(); }
             };
-            AddLabel("Auflösung (Rechengitter)", 18);
-            cbRes = AddCombo();
+            card.Add(new HintLabel("Auflösung (Rechengitter)") { ForeColor = Theme.Muted }, 18, 4);
+            cbRes = card.Add(new DropDown(), 32, 12);
             foreach (var r in ResNames) cbRes.Items.Add(r);
             cbRes.SelectedIndex = resIndex;
             cbRes.SelectedIndexChanged += delegate
@@ -185,126 +184,56 @@ namespace Windkanal
                 CreateSolver();
                 RebuildGeometry(true);
             };
-            chkWalls = AddCheck("Tunnelwände mit Reibung (Haftbedingung)", false);
+            chkWalls = card.Add(new Toggle { Text = "Wände mit Reibung (Haftbedingung)" }, 26, 4);
             chkWalls.CheckedChanged += delegate { solver.NoSlipWalls = chkWalls.Checked; stats.Clear(); };
+            card.Finish();
+            y += card.Height + 12;
 
-            AddHeader("DARSTELLUNG");
-            cbView = AddCombo();
-            cbView.Items.AddRange(new object[] { "Geschwindigkeit", "Druck (cp)", "Wirbelstärke", "Nur Rauch" });
+            // --- Darstellung
+            card = NewCard("Darstellung", ref y);
+            cbView = card.Add(new DropDown(), 32, 12);
+            cbView.Items.AddRange(new[] { "Geschwindigkeit", "Druck (cp)", "Wirbelstärke", "Nur Rauch" });
             cbView.SelectedIndex = 0;
             cbView.SelectedIndexChanged += delegate { viewMode = (ViewMode)cbView.SelectedIndex; dirty = true; };
-            chkSmoke = AddCheck("Rauchlinien anzeigen", true);
+            chkSmoke = card.Add(new Toggle { Text = "Rauchlinien anzeigen", Checked = true }, 26, 4);
             chkSmoke.CheckedChanged += delegate { showSmoke = chkSmoke.Checked; particles.Clear(); dirty = true; };
+            card.Finish();
+            y += card.Height + 12;
 
-            btnRun = AddButton("Pause", 136);
-            var btnReset = new Button();
-            StyleButton(btnReset, "Neu starten");
-            btnReset.SetBounds(16 + 144, btnRun.Top, 136, btnRun.Height);
-            side.Controls.Add(btnReset);
-            btnRun.Click += delegate { SetRunning(!running); };
-            btnReset.Click += delegate { ResetFlow(); };
-
-            AddHeader("MESSWERTE");
-            lblResults = AddLabel("", 136);
-            lblResults.Font = new Font("Consolas", 9.5f);
-
-            AddHeader("UMRECHNUNG AUF LUFT (20 °C)");
-            AddLabel("Echte Bezugslänge des Objekts in Metern:", 18);
-            numMeters = new NumericUpDown
-            {
-                DecimalPlaces = 3, Minimum = 0.001m, Maximum = 100m, Increment = 0.01m, Value = 0.1m,
-                BackColor = CCtl, ForeColor = CText, BorderStyle = BorderStyle.FixedSingle
-            };
-            numMeters.SetBounds(16, layoutY, 120, 24);
-            side.Controls.Add(numMeters);
-            layoutY += 32;
+            // --- Umrechnung
+            card = NewCard("Umrechnung auf Luft (20 °C)", ref y);
+            numMeters = card.Add(new NumberBox { Caption = "Echte Bezugslänge", Minimum = 0.001m, Maximum = 100m, Increment = 0.01m, Decimals = 3, Unit = "m" }, 32, 10);
+            numMeters.Value = 0.1m;
             numMeters.ValueChanged += delegate { UpdateReadouts(); };
-            lblPhys = AddLabel("", 88);
-            lblPhys.Font = new Font("Consolas", 9.5f);
+            rowsPhys = card.Add(new InfoRows { Note = "Kräfte je Meter Spannweite" }, 4 * InfoRows.Row, 4);
+            card.Finish();
+            y += card.Height + 14;
 
-            var btnInfo = AddButton("Physik && Grenzen der Simulation …", 280);
-            btnInfo.Click += delegate { ShowInfo(); };
-            layoutY += 10;
-            AddLabel("", 4);
+            var spacer = new Panel { BackColor = Theme.Chrome };
+            spacer.SetBounds(0, y, 1, 1);
+            side.Controls.Add(spacer);
 
             UpdateSliderLabels();
         }
 
-        Label AddLabel(string text, int h)
+        Card NewCard(string title, ref int y)
         {
-            var l = new Label { Text = text, ForeColor = CText, AutoSize = false };
-            l.SetBounds(16, layoutY, 290, h);
-            side.Controls.Add(l);
-            layoutY += h + 4;
-            return l;
-        }
-
-        void AddHeader(string text)
-        {
-            layoutY += 10;
-            var sep = new Panel { BackColor = CBorder };
-            sep.SetBounds(16, layoutY, 280, 1);
-            side.Controls.Add(sep);
-            layoutY += 8;
-            var l = AddLabel(text, 18);
-            l.ForeColor = CAccent;
-            l.Font = new Font("Segoe UI Semibold", 8.5f);
-        }
-
-        ComboBox AddCombo()
-        {
-            var c = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat,
-                BackColor = CCtl, ForeColor = CText
-            };
-            c.SetBounds(16, layoutY, 280, 24);
+            var c = new Card(title);
+            c.SetBounds(14, y, 300, 100);
             side.Controls.Add(c);
-            layoutY += 32;
             return c;
         }
 
-        TrackBar AddTrack(int min, int max, int val)
+        void LayoutHeader()
         {
-            var t = new TrackBar
+            int h = 34, top = (header.Height - h) / 2, x = header.Width - 16;
+            foreach (var b in new[] { btnRun, btnReset, btnInfo })
             {
-                Minimum = min, Maximum = max, Value = val, TickStyle = TickStyle.None,
-                AutoSize = false, BackColor = CPanel, SmallChange = 1, LargeChange = 5
-            };
-            t.SetBounds(10, layoutY, 292, 28);
-            side.Controls.Add(t);
-            layoutY += 32;
-            return t;
-        }
-
-        CheckBox AddCheck(string text, bool val)
-        {
-            var c = new CheckBox { Text = text, Checked = val, ForeColor = CText, FlatStyle = FlatStyle.Flat };
-            c.SetBounds(16, layoutY, 290, 22);
-            side.Controls.Add(c);
-            layoutY += 26;
-            return c;
-        }
-
-        Button AddButton(string text, int width)
-        {
-            var b = new Button();
-            StyleButton(b, text);
-            b.SetBounds(16, layoutY, width, 30);
-            side.Controls.Add(b);
-            layoutY += 38;
-            return b;
-        }
-
-        void StyleButton(Button b, string text)
-        {
-            b.Text = text;
-            b.FlatStyle = FlatStyle.Flat;
-            b.BackColor = CCtl;
-            b.ForeColor = CText;
-            b.FlatAppearance.BorderColor = CBorder;
-            b.FlatAppearance.MouseOverBackColor = Color.FromArgb(52, 58, 69);
-            b.Cursor = Cursors.Hand;
+                int w = b == btnRun ? 112 : b == btnReset ? 136 : 170;
+                x -= w;
+                b.SetBounds(x, top, w, h);
+                x -= 8;
+            }
         }
 
         static double SliderToRe(int v)
@@ -321,9 +250,9 @@ namespace Windkanal
 
         void UpdateSliderLabels()
         {
-            lblAngle.Text = "Anstellwinkel: " + angleDeg + "°";
-            lblSize.Text = "Größe: " + sizePercent + " % der Tunnelhöhe";
-            lblRe.Text = "Reynoldszahl: Re = " + reynolds.ToString("#,0", De);
+            tbAngle.ValueText = angleDeg + "°";
+            tbSize.ValueText = sizePercent + " %";
+            tbRe.ValueText = reynolds.ToString("#,0", De);
             bool custom = shape == ShapeKind.Eigene;
             tbAngle.Enabled = !custom;
             tbSize.Enabled = !custom;
@@ -367,7 +296,7 @@ namespace Windkanal
 
         void OnKey(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Space && !(ActiveControl is NumericUpDown))
+            if (e.KeyCode == Keys.Space && !(ActiveControl is TextBox))
             {
                 SetRunning(!running);
                 e.Handled = true;
@@ -379,6 +308,9 @@ namespace Windkanal
         {
             running = r;
             btnRun.Text = r ? "Pause" : "Start";
+            btnRun.Icon = r ? "" : "";
+            btnRun.Invalidate();
+            header.Invalidate();
         }
 
         // ------------------------------------------------------------ Simulation
@@ -553,33 +485,25 @@ namespace Windkanal
             double cd = stats.Count > 0 ? stats.Cd(0) : 0, cl = stats.Count > 0 ? stats.Cl(0) : 0;
             double mcd = 0, mcl = 0, freq = 0;
             if (settled) stats.Analyze(window, (int)(0.5 * T), out mcd, out mcl, out freq);
-            string avg = settled ? "" : "  (läuft ein…)";
 
-            string ld = "–";
-            if (settled && Math.Abs(mcd) > 1e-3) ld = F(mcl / mcd, "0.0");
-            string st = settled && freq > 0 ? F(freq * T, "0.000") : "–";
+            tCd = F(cd, "0.000");
+            tCl = F(cl, "0.000");
+            tCdAvg = settled ? "Mittel Ø " + F(mcd, "0.000") : "Mittel: läuft ein …";
+            tClAvg = settled ? "Mittel Ø " + F(mcl, "0.000") : "Mittel: läuft ein …";
+            tLd = settled && Math.Abs(mcd) > 1e-3 ? F(mcl / mcd, "0.0") : "–";
+            tSt = settled && freq > 0 ? F(freq * T, "0.000") : "–";
+            tSettle = settled ? "aus den Mittelwerten" : "nach der Einlaufzeit";
+            perfText = "Zeit t·U/L = " + F(tStar, "0.0") + "   ·   " + F(mlups, "#,0") + " MLUPS   ·   " + F(fps, "0") + " FPS";
 
-            lblResults.Text =
-                "                jetzt     Mittel Ø\n" +
-                "Widerstand cw  " + F(cd, "0.000").PadLeft(7) + "   " + (settled ? F(mcd, "0.000").PadLeft(7) : "   –") + "\n" +
-                "Auftrieb   ca  " + F(cl, "0.000").PadLeft(7) + "   " + (settled ? F(mcl, "0.000").PadLeft(7) : "   –") + "\n" +
-                "Gleitzahl ca/cw = " + ld + "\n" +
-                "Strouhal-Zahl St = " + st + "\n" +
-                "Versperrung      = " + F(100.0 * frontalCells / solver.NY, "0.0") + " %\n" +
-                "Bezugslänge = " + F(refLen, "0") + " Zellen (" + Shapes.RefName(shape) + ")\n" +
-                "Zeit t·U/L  = " + F(tStar, "0.0") + avg + "\n" +
-                "Leistung    = " + F(mlups, "0") + " MLUPS · " + F(fps, "0") + " FPS · " + (solver.OnGpu ? "GPU" : "CPU");
+            rowsGeo.Set(new[] { "Versperrung", "Bezugslänge" },
+                        new[] { F(100.0 * frontalCells / solver.NY, "0.0") + " %", F(refLen, "0") + " Zellen (" + Shapes.RefName(shape) + ")" });
 
             double Lm = (double)numMeters.Value;
             double v = reynolds * NuAir / Lm;
             double qd = 0.5 * RhoAir * v * v;
             double useCd = settled ? mcd : cd, useCl = settled ? mcl : cl;
-            lblPhys.Text =
-                "Anströmung  v  = " + Sig(v) + " m/s\n" +
-                "                 (" + Sig(v * 3.6) + " km/h)\n" +
-                "Widerstand  FW = " + Sig(useCd * qd * Lm) + " N/m\n" +
-                "Auftrieb    FA = " + Sig(useCl * qd * Lm) + " N/m\n" +
-                "(Kräfte je Meter Spannweite)";
+            rowsPhys.Set(new[] { "Anströmung v", "Widerstand FW", "Auftrieb FA" },
+                         new[] { Sig(v) + " m/s  (" + Sig(v * 3.6) + " km/h)", Sig(useCd * qd * Lm) + " N/m", Sig(useCl * qd * Lm) + " N/m" });
         }
 
         void UpdateStatus()
@@ -605,13 +529,74 @@ namespace Windkanal
             }
             if (warning != null && clock.Elapsed.TotalMilliseconds < warningUntil)
             {
-                status.ForeColor = CWarn;
-                status.Text = "⚠ " + warning;
-                return;
+                statusWarn = true;
+                statusText = "⚠  " + warning;
             }
-            status.ForeColor = CMuted;
-            status.Text = text.Length > 0 ? text
-                : (running ? "Läuft" : "Pausiert") + " auf " + solver.Backend + "   ·   Leertaste = Start/Pause   ·   Maus links = Wand zeichnen, rechts = radieren";
+            else
+            {
+                statusWarn = false;
+                statusText = text.Length > 0 ? text
+                    : "Tipp: Mit der Maus direkt ins Bild zeichnen (links = Wand, rechts = radieren)   ·   Leertaste = Start/Pause";
+            }
+            statusBar.Invalidate();
+        }
+
+        void OnStatusPaint(object sender, PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.Prepare(g);
+            g.Clear(Theme.Chrome);
+            var r = statusBar.ClientRectangle;
+            using (var p = new Pen(Theme.Border)) g.DrawLine(p, 0, 0, r.Width, 0);
+            Theme.Draw(g, perfText, Theme.Small, Theme.Faint, new Rectangle(0, 0, r.Width - 16, r.Height),
+                       TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            int pw = TextRenderer.MeasureText(perfText, Theme.Small).Width;
+            Theme.Draw(g, statusText, Theme.Small, statusWarn ? Theme.Warn : Theme.Muted,
+                       new Rectangle(16, 0, Math.Max(0, r.Width - 48 - pw), r.Height), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+
+        void OnHeaderPaint(object sender, PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.Prepare(g);
+            g.Clear(Theme.Chrome);
+            var r = header.ClientRectangle;
+            using (var p = new Pen(Theme.Border)) g.DrawLine(p, 0, r.Height - 1, r.Width, r.Height - 1);
+
+            // kleines Logo: Stromlinien um einen Kreis
+            int lx = 18, ly = (r.Height - 32) / 2;
+            Theme.FillRound(g, Theme.Card, new RectangleF(lx, ly, 32, 32), 8);
+            Color[] cols = { Theme.Cl, Color.FromArgb(106, 253, 98), Theme.Cd };
+            for (int i = 0; i < 3; i++)
+                using (var pen = new Pen(cols[i], 1.6f))
+                    foreach (int sgn in new[] { -1, 1 })
+                    {
+                        var pts = new PointF[13];
+                        for (int k = 0; k < pts.Length; k++)
+                        {
+                            float x = lx + 4 + 24f * k / (pts.Length - 1);
+                            float d = (x - (lx + 14)) / 6f;
+                            float yy = ly + 16 + sgn * (4 + 3.6f * i) + sgn * (5 - 1.2f * i) * (float)Math.Exp(-d * d);
+                            pts[k] = new PointF(x, yy);
+                        }
+                        g.DrawLines(pen, pts);
+                    }
+            using (var b = new SolidBrush(Theme.Text)) g.FillEllipse(b, lx + 10, ly + 12, 8, 8);
+
+            int tx = lx + 44;
+            Theme.Draw(g, "Windkanal 2D", Theme.Title, Theme.Text, new Rectangle(tx, 9, 300, 24), TextFormatFlags.Left);
+            Theme.Draw(g, "Lattice-Boltzmann-Strömungssimulation", Theme.Small, Theme.Muted, new Rectangle(tx, 34, 300, 18), TextFormatFlags.Left);
+
+            // Zustand: läuft/pausiert + Rechenwerk
+            if (solver == null) return;
+            string state = (running ? "Läuft" : "Pausiert") + "  ·  " + solver.Backend;
+            int sw = TextRenderer.MeasureText(state, Theme.Small).Width;
+            int px = tx + 290, pw = sw + 34, ph = 26, py = (r.Height - ph) / 2;
+            if (px + pw > btnInfo.Left - 16) return;
+            Theme.FillRound(g, Theme.Card, new RectangleF(px, py, pw, ph), ph / 2f);
+            Theme.StrokeRound(g, Theme.Border, new RectangleF(px, py, pw, ph), ph / 2f);
+            using (var b = new SolidBrush(running ? Theme.Good : Theme.Warn)) g.FillEllipse(b, px + 12, py + ph / 2f - 4, 8, 8);
+            Theme.Draw(g, state, Theme.Small, Theme.Text, new Rectangle(px + 26, py, sw + 4, ph), TextFormatFlags.VerticalCenter);
         }
 
         void OnViewPaint(object sender, PaintEventArgs e)
@@ -625,88 +610,115 @@ namespace Windkanal
         {
             if (viewMode == ViewMode.Rauch) return;
             string title, lo, mid, hi;
-            float tMid = 0.5f;
             switch (viewMode)
             {
                 case ViewMode.Druck: title = "Druckbeiwert cp"; lo = "−2"; mid = "0"; hi = "+1"; break;
                 case ViewMode.Wirbel: title = "Wirbelstärke ω·L/U∞"; lo = "−6 (im UZS)"; mid = "0"; hi = "+6"; break;
                 default: title = "Geschwindigkeit |u| / U∞"; lo = "0"; mid = "1"; hi = "2"; break;
             }
-            int w = 200, h = 10;
-            int x0 = view.ClientSize.Width - w - 20, y0 = view.ClientSize.Height - 46;
+            int w = 200, h = 8;
+            int x0 = view.ClientSize.Width - w - 30, y0 = view.ClientSize.Height - 46;
             if (x0 < 10 || y0 < 10) return;
-            using (var bg = new SolidBrush(Color.FromArgb(170, 14, 16, 20)))
-                g.FillRectangle(bg, x0 - 10, y0 - 22, w + 20, 54);
-            for (int i = 0; i < w; i++)
-                using (var p = new Pen(Renderer.LutColor(viewMode, i / (float)(w - 1), renderer)))
-                    g.DrawLine(p, x0 + i, y0, x0 + i, y0 + h);
-            using (var f = new Font("Segoe UI", 8f))
-            using (var b = new SolidBrush(CText))
+            Theme.Prepare(g);
+            Theme.FillRound(g, Color.FromArgb(200, 22, 25, 31), new RectangleF(x0 - 14, y0 - 30, w + 28, 64), 10);
+            Theme.StrokeRound(g, Color.FromArgb(160, Theme.Border), new RectangleF(x0 - 14, y0 - 30, w + 28, 64), 10);
+            using (var bmp = new Bitmap(w, 1))
             {
-                g.DrawString(title, f, b, x0, y0 - 18);
-                g.DrawString(lo, f, b, x0 - 2, y0 + h + 1);
-                var ms = g.MeasureString(mid, f);
-                g.DrawString(mid, f, b, x0 + w * tMid - ms.Width / 2, y0 + h + 1);
-                var hs = g.MeasureString(hi, f);
-                g.DrawString(hi, f, b, x0 + w - hs.Width + 2, y0 + h + 1);
+                for (int i = 0; i < w; i++) bmp.SetPixel(i, 0, Renderer.LutColor(viewMode, i / (float)(w - 1), renderer));
+                using (var path = Theme.Round(new RectangleF(x0, y0, w, h), h / 2f))
+                using (var tb = new TextureBrush(bmp, WrapMode.TileFlipY))
+                {
+                    tb.TranslateTransform(x0, y0);
+                    g.FillPath(tb, path);
+                }
             }
+            Theme.Draw(g, title, Theme.Small, Theme.Text, new Rectangle(x0, y0 - 22, w, 16), TextFormatFlags.Left);
+            var lr = new Rectangle(x0, y0 + h + 4, w, 16);
+            Theme.Draw(g, lo, Theme.Small, Theme.Muted, lr, TextFormatFlags.Left);
+            Theme.Draw(g, mid, Theme.Small, Theme.Muted, lr, TextFormatFlags.HorizontalCenter);
+            Theme.Draw(g, hi, Theme.Small, Theme.Muted, lr, TextFormatFlags.Right);
+        }
+
+        void DrawTile(Graphics g, Rectangle r, string caption, string value, string sub, Color accent)
+        {
+            Theme.FillRound(g, Theme.Card, r, 10);
+            Theme.StrokeRound(g, Theme.Border, r, 10);
+            if (accent != Color.Empty)
+                Theme.FillRound(g, accent, new RectangleF(r.X + 14, r.Y + 14, 8, 8), 4);
+            int cx = r.X + (accent != Color.Empty ? 28 : 14);
+            Theme.Draw(g, caption, Theme.Caps, Theme.Muted, new Rectangle(cx, r.Y + 10, r.Right - cx - 8, 16), TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, value, Theme.Big, Theme.Text, new Rectangle(r.X + 12, r.Y + 28, r.Width - 20, 32), TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, sub, Theme.Small, Theme.Faint, new Rectangle(r.X + 14, r.Bottom - 22, r.Width - 20, 16), TextFormatFlags.VerticalCenter);
         }
 
         void OnGraphPaint(object sender, PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.Clear(CPanel);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Theme.Prepare(g);
+            g.Clear(Theme.Chrome);
             var r = graph.ClientRectangle;
-            var plot = new Rectangle(r.Left + 56, r.Top + 30, r.Width - 56 - 20, r.Height - 30 - 26);
-            using (var f = new Font("Segoe UI", 8.5f))
-            using (var muted = new SolidBrush(CMuted))
+            using (var p = new Pen(Theme.Border)) g.DrawLine(p, 0, 0, r.Width, 0);
+
+            // Messwert-Kacheln (2 × 2)
+            int tw = 158, th = (r.Height - 14 - 14 - 10) / 2, gx = 14, gy = 14;
+            DrawTile(g, new Rectangle(gx, gy, tw, th), "WIDERSTAND  cw", tCd, tCdAvg, Theme.Cd);
+            DrawTile(g, new Rectangle(gx + tw + 10, gy, tw, th), "AUFTRIEB  ca", tCl, tClAvg, Theme.Cl);
+            DrawTile(g, new Rectangle(gx, gy + th + 10, tw, th), "GLEITZAHL  ca/cw", tLd, tSettle, Color.Empty);
+            DrawTile(g, new Rectangle(gx + tw + 10, gy + th + 10, tw, th), "STROUHAL  St", tSt, tSettle, Color.Empty);
+
+            // Verlauf der Kraftbeiwerte
+            var box = new Rectangle(gx + 2 * tw + 24, gy, r.Width - (gx + 2 * tw + 24) - 14, r.Height - 28);
+            if (box.Width < 120) return;
+            Theme.FillRound(g, Theme.Card, box, 10);
+            Theme.StrokeRound(g, Theme.Border, box, 10);
+            var plot = new Rectangle(box.Left + 52, box.Top + 36, box.Width - 52 - 18, box.Height - 36 - 28);
+            Theme.Draw(g, "Kraftbeiwerte über der Zeit", Theme.Semi, Theme.Text, new Rectangle(box.Left + 14, box.Top + 10, 220, 18), TextFormatFlags.VerticalCenter);
+            int lx = box.Left + 240;
+            Theme.FillRound(g, Theme.Cd, new RectangleF(lx, box.Top + 17, 14, 4), 2);
+            Theme.Draw(g, "cw (Widerstand)", Theme.Small, Theme.Muted, new Rectangle(lx + 20, box.Top + 10, 110, 18), TextFormatFlags.VerticalCenter);
+            Theme.FillRound(g, Theme.Cl, new RectangleF(lx + 130, box.Top + 17, 14, 4), 2);
+            Theme.Draw(g, "ca (Auftrieb)", Theme.Small, Theme.Muted, new Rectangle(lx + 150, box.Top + 10, 100, 18), TextFormatFlags.VerticalCenter);
+
+            if (plot.Width < 20 || plot.Height < 20) return;
+            double T = ConvectiveTime;
+            int span = Math.Min(stats.Count, (int)(60 * T));
+            if (span < 2)
             {
-                g.DrawString("Kraftbeiwerte über der Zeit", new Font("Segoe UI Semibold", 9f), new SolidBrush(CText), r.Left + 12, r.Top + 7);
-                using (var b1 = new SolidBrush(CCd)) g.FillRectangle(b1, r.Left + 210, r.Top + 13, 14, 3);
-                g.DrawString("cw (Widerstand)", f, muted, r.Left + 228, r.Top + 7);
-                using (var b2 = new SolidBrush(CCl)) g.FillRectangle(b2, r.Left + 340, r.Top + 13, 14, 3);
-                g.DrawString("ca (Auftrieb)", f, muted, r.Left + 358, r.Top + 7);
-
-                if (plot.Width < 20 || plot.Height < 20) return;
-                double T = ConvectiveTime;
-                int span = Math.Min(stats.Count, (int)(60 * T));
-                if (span < 2)
-                {
-                    g.DrawString("Noch keine Daten", f, muted, plot.Left, plot.Top + plot.Height / 2 - 8);
-                    return;
-                }
-                double lo = double.MaxValue, hi = double.MinValue;
-                int stride = Math.Max(1, span / 2000);
-                int skip = Math.Min(span - 1, (int)(3 * T)); // Einschwingspitze nicht skalieren
-                for (int k = 0; k < span - skip; k += stride)
-                {
-                    double a = stats.Cd(k), b = stats.Cl(k);
-                    lo = Math.Min(lo, Math.Min(a, b)); hi = Math.Max(hi, Math.Max(a, b));
-                }
-                lo = Math.Min(lo, 0); hi = Math.Max(hi, 0);
-                double pad = Math.Max(0.1, (hi - lo) * 0.1);
-                lo -= pad; hi += pad;
-
-                using (var grid = new Pen(Color.FromArgb(50, 56, 66)))
-                {
-                    for (int i = 0; i <= 4; i++)
-                    {
-                        double v = lo + (hi - lo) * i / 4;
-                        float yy = (float)(plot.Bottom - (v - lo) / (hi - lo) * plot.Height);
-                        g.DrawLine(grid, plot.Left, yy, plot.Right, yy);
-                        g.DrawString(F(v, "0.00"), f, muted, r.Left + 8, yy - 8);
-                    }
-                    float y0 = (float)(plot.Bottom - (0 - lo) / (hi - lo) * plot.Height);
-                    using (var zero = new Pen(Color.FromArgb(90, 98, 112))) g.DrawLine(zero, plot.Left, y0, plot.Right, y0);
-                }
-                double spanT = span / T;
-                g.DrawString("← letzte " + F(spanT, "0") + " Zeiteinheiten t·U/L", f, muted, plot.Left, plot.Bottom + 5);
-                g.DrawString("jetzt", f, muted, plot.Right - 26, plot.Bottom + 5);
-
-                DrawSeries(g, plot, span, lo, hi, true);
-                DrawSeries(g, plot, span, lo, hi, false);
+                Theme.Draw(g, "Noch keine Daten", Theme.Small, Theme.Muted, plot, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
+                return;
             }
+            double lo = double.MaxValue, hi = double.MinValue;
+            int stride = Math.Max(1, span / 2000);
+            int skip = Math.Min(span - 1, (int)(3 * T)); // Einschwingspitze nicht skalieren
+            for (int k = 0; k < span - skip; k += stride)
+            {
+                double a = stats.Cd(k), b = stats.Cl(k);
+                lo = Math.Min(lo, Math.Min(a, b)); hi = Math.Max(hi, Math.Max(a, b));
+            }
+            lo = Math.Min(lo, 0); hi = Math.Max(hi, 0);
+            double pad = Math.Max(0.1, (hi - lo) * 0.1);
+            lo -= pad; hi += pad;
+
+            using (var grid = new Pen(Color.FromArgb(44, 50, 60)))
+            {
+                for (int i = 0; i <= 4; i++)
+                {
+                    double v = lo + (hi - lo) * i / 4;
+                    float yy = (float)(plot.Bottom - (v - lo) / (hi - lo) * plot.Height);
+                    g.DrawLine(grid, plot.Left, yy, plot.Right, yy);
+                    Theme.Draw(g, F(v, "0.00"), Theme.Small, Theme.Faint, new Rectangle(box.Left + 4, (int)yy - 8, 40, 16),
+                               TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+                }
+                float y0 = (float)(plot.Bottom - (0 - lo) / (hi - lo) * plot.Height);
+                using (var zero = new Pen(Color.FromArgb(80, 88, 102))) g.DrawLine(zero, plot.Left, y0, plot.Right, y0);
+            }
+            double spanT = span / T;
+            Theme.Draw(g, "← letzte " + F(spanT, "0") + " Zeiteinheiten t·U/L", Theme.Small, Theme.Faint,
+                       new Rectangle(plot.Left, plot.Bottom + 6, 300, 16), TextFormatFlags.Left);
+            Theme.Draw(g, "jetzt", Theme.Small, Theme.Faint, new Rectangle(plot.Right - 60, plot.Bottom + 6, 60, 16), TextFormatFlags.Right);
+
+            DrawSeries(g, plot, span, lo, hi, true);
+            DrawSeries(g, plot, span, lo, hi, false);
         }
 
         void DrawSeries(Graphics g, Rectangle plot, int span, double lo, double hi, bool cd)
@@ -722,7 +734,7 @@ namespace Windkanal
                 float x = plot.Right - (float)back / (span - 1) * plot.Width;
                 pts[i] = new PointF(x, (float)(plot.Bottom - (v - lo) / (hi - lo) * plot.Height));
             }
-            using (var p = new Pen(cd ? CCd : CCl, 1.6f)) g.DrawLines(p, pts);
+            using (var p = new Pen(cd ? Theme.Cd : Theme.Cl, 1.8f)) g.DrawLines(p, pts);
         }
 
         // ------------------------------------------------------------ Zeichnen
@@ -795,18 +807,19 @@ namespace Windkanal
                 "• cw, ca: Widerstands- und Auftriebsbeiwert, bezogen auf q·L (q = ½ρU²).\n" +
                 "• St = f·L/U: dimensionslose Frequenz der Wirbelablösung.\n" +
                 "• cp: Druckbeiwert. +1 = Staupunkt, negativ = Unterdruck (Sog).\n\n" +
-                "VALIDIERUNG (Zylinder bei Re = 100, Kármánsche Wirbelstraße)\n" +
+                "VALIDIERUNG\n" +
+                "Zylinder bei Re = 100 (Kármánsche Wirbelstraße):\n" +
                 "• Literatur: St ≈ 0,164–0,167, cw ≈ 1,33–1,40\n" +
                 "• Diese App: St ≈ 0,166–0,172, cw ≈ 1,50–1,54\n" +
-                "Die Frequenz stimmt sehr gut. Der Widerstand liegt ca. 10 % zu hoch: durch die Versperrung\n" +
-                "(wie im echten Windkanal) und die treppenförmige Körperkontur im Rechengitter.\n" +
+                "Die Frequenz stimmt sehr gut. Der Widerstand liegt ca. 10 % zu hoch: durch die Versperrung " +
+                "(wie im echten Windkanal) und die treppenförmige Körperkontur im Rechengitter. " +
                 "Höhere Auflösung und kleinere Objekte bringen die Werte näher an die Literatur.\n\n" +
                 "GRENZEN\n" +
                 "• 2D: Das Objekt ist unendlich lang (Profilschnitt). 3D-Effekte wie Randwirbel fehlen.\n" +
                 "• Ab ca. Re > 1.000 ist echte Turbulenz dreidimensional; 2D-Werte sind dann Richtwerte, gut für Vergleiche (Form A vs. Form B).\n" +
                 "• Höhere Auflösung = genauere Grenzschicht = verlässlichere Beiwerte.\n" +
                 "• Die Mittelwerte stehen erst nach der Einlaufzeit (≈ 15 Zeiteinheiten) zur Verfügung.";
-            MessageBox.Show(this, t, "Physik & Grenzen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            using (var dlg = new InfoDialog("Physik & Grenzen", t)) dlg.ShowDialog(this);
         }
     }
 }

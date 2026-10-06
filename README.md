@@ -216,7 +216,7 @@ In der App (600×240, Zylinder) zeigt die Anzeige ca. 6500 MLUPS und 46 FPS.
 - Der Einschwingvorgang (erste ca. 15 Umströmungszeiten) verfälscht die Anzeige "jetzt", der Mittelwert wird erst danach gezeigt.
 - Auto-Profil ist eine grobe Polygon-Näherung ohne Räder und Unterboden.
 - Installer ist nicht signiert, Windows SmartScreen kann beim ersten Start warnen.
-- Die Seitenleiste muss gescrollt werden, um die Umrechnung auf Luft zu sehen.
+- Bei kleinen Fenstern (unter ca. 940 Pixel Höhe) muss die Seitenleiste gescrollt werden.
 
 **Nicht getestet (nur gebaut, nie bewusst geprüft)**
 - Ansichten "Druck" und "Wirbelstärke" wurden nicht systematisch angeschaut (nur Geschwindigkeit per Screenshot geprüft).
@@ -308,7 +308,7 @@ Idee: Ein echter Rauchkanal ist selbst ein fast zweidimensionales Experiment (Li
 - [ ] Mehr Medien: Wasser, andere Temperatur, benutzerdefinierte Dichte und Zähigkeit
 - [ ] Tooltips, Hilfetexte, Einheitenwahl (m/s, km/h), Dunkel/Hell
 - [ ] Installer signieren oder als MSIX paketieren, Update-Prüfung
-- [ ] Seitenleiste umbauen (Reiter statt langer Liste)
+- [x] Oberfläche modernisiert: dunkle Titelleiste, Kopfzeile mit Start/Pause, Karten in der Seitenleiste, eigene Regler, Schalter und Auswahllisten, Messwert-Kacheln neben dem Diagramm
 
 ### Phase 5 (optional, groß): 3D
 - D3Q19 oder D3Q27 auf der GPU, **STL-Import** mit Voxelisierung, Schnitt-Darstellung und Stromlinien. Gute Referenz zum Anschauen: das Open-Source-Projekt FluidX3D.
@@ -326,7 +326,8 @@ Quellcode/
   build.ps1              Baut App + Installer + ValidationTest.exe (ruft csc.exe von .NET Framework 4.8 auf, erzeugt auch das Icon)
   App/
     Program.cs           Einstieg
-    MainForm.cs          Oberfläche, Steuerung, Zeichnen mit der Maus, Messwert-Anzeige, Diagramm
+    MainForm.cs          Oberfläche, Steuerung, Zeichnen mit der Maus, Messwert-Kacheln, Diagramm
+    Ui.cs                dunkles Design: Farben, selbst gezeichnete Regler, Schalter, Auswahllisten, Karten, Hilfefenster
     Solver.cs            LBM-Löser (D2Q9, regularisiert, Smagorinsky), Ränder, Kräfte, ChooseU0, Reset/Kick; nutzt die GPU, wenn vorhanden
     GpuLbm.cs            derselbe Löser als OpenCL-Kernel für die Grafikkarte (P/Invoke auf OpenCL.dll)
     Shapes.cs            Formen (Polygone, NACA-Profil, Auto), Drehen/Skalieren, Rasterung
