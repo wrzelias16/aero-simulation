@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -16,22 +17,55 @@ using Windkanal;
 namespace WindkanalSetup
 {
     /// <summary>
-    /// Installiert/deinstalliert Windkanal für den aktuellen Benutzer (keine Admin-Rechte nötig).
-    /// Start mit /uninstall oder als "...Deinstallieren.exe" öffnet direkt die Deinstallation, /silent ohne Fenster.
-    /// Oberfläche im Design des Programms (Theme, Schrift Outfit, Hell/Dunkel wie gemerkt).
+    /// Eine Datei für alles: Installer und Deinstaller in einem. Enthält das Programm als Ressource.
+    /// Installieren mit frei wählbarem Ordner (Ordner, die Adminrechte brauchen, z. B. „Programme“: Neustart mit Adminrechten).
+    /// Nach der Installation liegt eine Kopie dieser Datei als „Deinstallieren.exe“ im Programmordner; darauf zeigt der
+    /// Eintrag in den Windows-Apps.
+    /// Aufruf: ohne Argumente = Fenster; /uninstall = Entfernen; /silent = ohne Fenster;
+    /// /install /dir="…" /desktop=0|1 /startmenu=0|1 /launch=0|1 = Installation sofort starten (für den Neustart mit Adminrechten).
     /// </summary>
     static class Setup
     {
         const string AppExe = "Windkanal2D.exe";
         const string UninstallExe = "Deinstallieren.exe";
-        // Ordner, Registry-Schlüssel und Programmdatei behalten ihre alten Namen, damit Updates die alte Installation finden
+        // Registry-Schlüssel und Programmdatei behalten ihre alten Namen, damit Updates die alte Installation finden
         const string RegKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Windkanal2D";
         static readonly string[] OldLinkNames = { "Windkanal 2D" };
 
-        static string InstallDir
+        /// <summary>Ordner der früheren Versionen (fester Ort).</summary>
+        static string LegacyDir
         {
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Windkanal2D"); }
         }
+
+        /// <summary>Ordner der bestehenden Installation laut Windows-Apps-Eintrag (oder alter fester Ort), sonst null.</summary>
+        public static string InstalledDir
+        {
+            get
+            {
+                try
+                {
+                    using (var k = Registry.CurrentUser.OpenSubKey(RegKey))
+                    {
+                        var d = k != null ? k.GetValue("InstallLocation") as string : null;
+                        if (!string.IsNullOrEmpty(d) && File.Exists(Path.Combine(d, AppExe))) return d;
+                    }
+                }
+                catch { }
+                return File.Exists(Path.Combine(LegacyDir, AppExe)) ? LegacyDir : null;
+            }
+        }
+
+        /// <summary>Vorschlag: bestehende Installation, sonst für den eigenen Benutzer ohne Adminrechte.</summary>
+        public static string DefaultDir
+        {
+            get
+            {
+                return InstalledDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", AppInfo.Name);
+            }
+        }
+
+        public static bool IsInstalled { get { return InstalledDir != null; } }
 
         static string Link(Environment.SpecialFolder where, string name)
         {
@@ -41,9 +75,34 @@ namespace WindkanalSetup
         static string StartMenuLink { get { return Link(Environment.SpecialFolder.Programs, AppInfo.Name); } }
         static string DesktopLink { get { return Link(Environment.SpecialFolder.DesktopDirectory, AppInfo.Name); } }
 
-        public static bool IsInstalled { get { return File.Exists(Path.Combine(InstallDir, AppExe)); } }
-        public static string AppPath { get { return Path.Combine(InstallDir, AppExe); } }
-        public static string Folder { get { return InstallDir; } }
+        public static bool IsAdmin
+        {
+            get
+            {
+                try { return new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent())
+                                 .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator); }
+                catch { return false; }
+            }
+        }
+
+        /// <summary>
+        /// Darf dieser Prozess in den Ordner schreiben? Geprüft wird im Ordner selbst oder, wenn er noch nicht existiert,
+        /// im nächsten vorhandenen Elternordner – ohne Ordner anzulegen; die Probedatei wird sofort wieder gelöscht.
+        /// </summary>
+        public static bool CanWrite(string dir)
+        {
+            try
+            {
+                string d = Path.GetFullPath(dir);
+                while (d != null && !Directory.Exists(d)) d = Path.GetDirectoryName(d);
+                if (d == null) return false;
+                string probe = Path.Combine(d, ".schreibtest-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+                return true;
+            }
+            catch { return false; }
+        }
 
         [STAThread]
         static int Main(string[] args)
@@ -51,30 +110,66 @@ namespace WindkanalSetup
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            bool silent = Array.Exists(args, a => a.Equals("/silent", StringComparison.OrdinalIgnoreCase));
+            Func<string, bool> has = a => Array.Exists(args, x => x.Equals(a, StringComparison.OrdinalIgnoreCase));
+            Func<string, string> val = key =>
+            {
+                foreach (var x in args)
+                    if (x.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase)) return x.Substring(key.Length + 1).Trim('"');
+                return null;
+            };
             string self = Path.GetFileName(Application.ExecutablePath);
-            bool uninstallMode = Array.Exists(args, a => a.Equals("/uninstall", StringComparison.OrdinalIgnoreCase))
-                                 || self.IndexOf("deinstall", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool uninstallMode = has("/uninstall") || self.IndexOf("deinstall", StringComparison.OrdinalIgnoreCase) >= 0;
+            var opts = new Options
+            {
+                Dir = val("/dir") ?? DefaultDir,
+                Desktop = val("/desktop") != "0",
+                StartMenu = val("/startmenu") != "0",
+                Launch = val("/launch") != "0",
+                AutoStart = has("/install") || (uninstallMode && has("/now"))
+            };
 
-            if (silent)
+            if (has("/silent"))
             {
                 try
                 {
-                    if (uninstallMode) Uninstall(); else Install(true, true);
+                    if (uninstallMode) Uninstall(); else Install(opts.Dir, opts.Desktop, opts.StartMenu);
                     return 0;
                 }
                 catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
             }
-            Application.Run(new SetupForm(uninstallMode));
+            Application.Run(new SetupForm(uninstallMode, opts));
             return 0;
+        }
+
+        public sealed class Options
+        {
+            public string Dir;
+            public bool Desktop, StartMenu, Launch, AutoStart;
+        }
+
+        /// <summary>Diese Datei mit Adminrechten neu starten (Windows fragt nach). false, wenn abgelehnt.</summary>
+        public static bool RestartAsAdmin(string args)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(Application.ExecutablePath, args) { Verb = "runas", UseShellExecute = true });
+                return true;
+            }
+            catch { return false; }
         }
 
         // ------------------------------------------------------------ Installation
 
-        public static void Install(bool desktop, bool startMenu)
+        public static void Install(string dir, bool desktop, bool startMenu)
         {
             CloseRunningApp();
-            string dir = InstallDir;
+            dir = Path.GetFullPath(dir);
+            // Wechsel des Ordners: alte Installation vorher entfernen (sonst bliebe sie verwaist liegen)
+            string old = InstalledDir;
+            if (old != null && !string.Equals(Path.GetFullPath(old).TrimEnd('\\'), dir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            {
+                try { RemoveFiles(old); } catch { }   // alter Ordner nicht löschbar (z. B. Rechte): neue Installation trotzdem anlegen
+            }
             Directory.CreateDirectory(dir);
 
             string target = Path.Combine(dir, AppExe);
@@ -89,10 +184,10 @@ namespace WindkanalSetup
                 File.Copy(Application.ExecutablePath, uninst, true);
 
             // alte Verknüpfungen („Windkanal 2D“) durch neue ersetzen
-            foreach (var old in OldLinkNames)
+            foreach (var o in OldLinkNames)
             {
-                TryDelete(Link(Environment.SpecialFolder.Programs, old));
-                TryDelete(Link(Environment.SpecialFolder.DesktopDirectory, old));
+                TryDelete(Link(Environment.SpecialFolder.Programs, o));
+                TryDelete(Link(Environment.SpecialFolder.DesktopDirectory, o));
             }
             if (startMenu) CreateShortcut(StartMenuLink, target, dir);
             else TryDelete(StartMenuLink);
@@ -119,32 +214,36 @@ namespace WindkanalSetup
         public static void Uninstall()
         {
             CloseRunningApp();
+            string dir = InstalledDir;
             TryDelete(StartMenuLink);
             TryDelete(DesktopLink);
-            foreach (var old in OldLinkNames)
+            foreach (var o in OldLinkNames)
             {
-                TryDelete(Link(Environment.SpecialFolder.Programs, old));
-                TryDelete(Link(Environment.SpecialFolder.DesktopDirectory, old));
+                TryDelete(Link(Environment.SpecialFolder.Programs, o));
+                TryDelete(Link(Environment.SpecialFolder.DesktopDirectory, o));
             }
             Registry.CurrentUser.DeleteSubKeyTree(RegKey, false);
             Registry.CurrentUser.DeleteSubKeyTree(@"Software\Windkanal2D", false);   // gemerktes Design
+            if (dir != null) RemoveFiles(dir);
+        }
 
-            string dir = InstallDir;
+        /// <summary>Programmdateien und Ordner löschen; läuft diese Datei selbst aus dem Ordner, verschwindet er kurz nach dem Beenden.</summary>
+        static void RemoveFiles(string dir)
+        {
             if (!Directory.Exists(dir)) return;
-
             string selfPath = Path.GetFullPath(Application.ExecutablePath);
-            bool runningFromInstallDir = selfPath.StartsWith(Path.GetFullPath(dir) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-
-            foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+            bool runningFromDir = selfPath.StartsWith(Path.GetFullPath(dir).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
+            foreach (var f in new[] { AppExe, UninstallExe })
             {
-                if (runningFromInstallDir && string.Equals(Path.GetFullPath(f), selfPath, StringComparison.OrdinalIgnoreCase)) continue;
-                TryDelete(f);
+                string p = Path.Combine(dir, f);
+                if (runningFromDir && string.Equals(Path.GetFullPath(p), selfPath, StringComparison.OrdinalIgnoreCase)) continue;
+                if (File.Exists(p)) File.Delete(p);   // Fehler (z. B. fehlende Rechte) bis nach oben melden
             }
-
-            if (runningFromInstallDir)
+            // nur unseren eigenen Ordner löschen, und nur wenn sonst nichts darin liegt
+            bool empty = Directory.GetFileSystemEntries(dir).Length == (runningFromDir ? 1 : 0);
+            if (!empty) return;
+            if (runningFromDir)
             {
-                // Das laufende Deinstallationsprogramm kann sich nicht selbst löschen:
-                // Ordner wird kurz nach dem Beenden entfernt.
                 var psi = new ProcessStartInfo("cmd.exe", "/c timeout /t 2 /nobreak >nul & rmdir /s /q \"" + dir + "\"")
                 {
                     CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden
@@ -153,7 +252,7 @@ namespace WindkanalSetup
             }
             else
             {
-                try { Directory.Delete(dir, true); } catch { }
+                try { Directory.Delete(dir, false); } catch { }
             }
         }
 
@@ -187,31 +286,46 @@ namespace WindkanalSetup
             st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "Strömungssimulation in 2D und 3D" });
             st.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
         }
+
+        /// <summary>Programm starten – bei Adminrechten über den Explorer, damit es als normaler Benutzer läuft.</summary>
+        public static void Launch(string dir)
+        {
+            string app = Path.Combine(dir, AppExe);
+            try
+            {
+                if (IsAdmin) Process.Start("explorer.exe", "\"" + app + "\"");
+                else Process.Start(new ProcessStartInfo(app) { WorkingDirectory = dir });
+            }
+            catch { }
+        }
     }
 
     /// <summary>
-    /// Installer-Fenster im Design des Programms: oben die Strömungsbühne, darunter Name und Version,
-    /// Optionen als Schalter, Fortschritt als Kapseln, Rückfragen direkt im Fenster (keine Windows-Meldungsfenster).
+    /// Installer-Fenster im Design des Programms: oben die Strömungsbühne, darunter Name und Version, der Zielordner
+    /// (mit „Ändern …“), Optionen als Schalter, Fortschritt als Balken, Rückfragen direkt im Fenster.
     /// </summary>
     sealed class SetupForm : Form
     {
         const int W = 600, Pad = 16, StageH = 196;
         readonly bool uninstallMode;
+        readonly Setup.Options opts;
         readonly FlowStage stage = new FlowStage(320);
         readonly Stopwatch clock = Stopwatch.StartNew();
         readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 16 };
         readonly Toggle chkStart, chkDesktop, chkLaunch;
-        readonly FlatButton btnMain, btnRemove, btnClose;
-        readonly int optionsTop, statusTop;
-        string status = "", detail = "";
+        readonly FlatButton btnMain, btnRemove, btnClose, btnDir;
+        readonly int dirTop, optionsTop, statusTop;
+        string dir, status = "", detail = "";
         Color statusColor;
         float progress = -1, progressTarget;
-        bool busy, confirmRemove, done;
+        bool busy, confirmRemove, done, needsAdmin;
         double confirmUntil;
 
-        public SetupForm(bool uninstallMode)
+        public SetupForm(bool uninstallMode, Setup.Options opts)
         {
             this.uninstallMode = uninstallMode;
+            this.opts = opts;
+            dir = uninstallMode ? (Setup.InstalledDir ?? opts.Dir) : opts.Dir;
             Text = AppInfo.Name + (uninstallMode ? " – entfernen" : " – Installation");
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -223,29 +337,46 @@ namespace WindkanalSetup
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
             int y = Pad + StageH + 92;
+            dirTop = y;
+            // Zielordner mit „Ändern …“
+            btnDir = new FlatButton { Text = "Ändern …", BackColor = Theme.Card };
+            btnDir.SetBounds(W - Pad - 110, y + 14, 110, 34);
+            btnDir.Click += delegate { ChooseDir(); };
+            Controls.Add(btnDir);
+            y += 60;
             optionsTop = y;
-            chkStart = MakeToggle("Verknüpfung im Startmenü", ref y);
-            chkDesktop = MakeToggle("Verknüpfung auf dem Desktop", ref y);
-            chkLaunch = MakeToggle("Nach der Installation starten", ref y);
-            if (uninstallMode) { chkStart.Visible = chkDesktop.Visible = chkLaunch.Visible = false; y = optionsTop + 20; }
+            chkStart = MakeToggle("Verknüpfung im Startmenü", opts.StartMenu, ref y);
+            chkDesktop = MakeToggle("Verknüpfung auf dem Desktop", opts.Desktop, ref y);
+            chkLaunch = MakeToggle("Nach der Installation starten", opts.Launch, ref y);
+            if (uninstallMode)
+            {
+                chkStart.Visible = chkDesktop.Visible = chkLaunch.Visible = btnDir.Visible = false;
+                y = optionsTop;
+            }
             statusTop = y + 10;
             int by = statusTop + 64;
             ClientSize = new Size(W, by + 40 + Pad + 4);
 
             btnMain = new FlatButton { Primary = true, BackColor = Theme.Card };
-            btnMain.SetBounds(W - Pad - 170, by, 170, 40);
+            btnMain.SetBounds(W - Pad - 210, by, 210, 40);
             btnRemove = new FlatButton { Text = "Deinstallieren", BackColor = Theme.Card };
             btnRemove.SetBounds(Pad, by, 150, 40);
             btnClose = new FlatButton { Text = "Schließen", BackColor = Theme.Card };
-            btnClose.SetBounds(W - Pad - 170 - 10 - 120, by, 120, 40);
+            btnClose.SetBounds(W - Pad - 210 - 10 - 120, by, 120, 40);
             btnMain.Click += delegate { OnMain(); };
             btnRemove.Click += delegate { OnRemove(); };
             btnClose.Click += delegate { Close(); };
             Controls.AddRange(new Control[] { btnMain, btnRemove, btnClose });
 
             timer.Tick += delegate { OnTick(); };
-            Shown += delegate { timer.Start(); };
+            Shown += delegate
+            {
+                timer.Start();
+                // nach dem Neustart mit Adminrechten gleich weitermachen
+                if (opts.AutoStart) { if (uninstallMode) { confirmRemove = true; OnRemove(); } else OnMain(); }
+            };
             FormClosed += delegate { timer.Stop(); };
+            CheckDir();
             RefreshState();
         }
 
@@ -255,13 +386,32 @@ namespace WindkanalSetup
             Theme.DarkTitleBar(Handle);
         }
 
-        Toggle MakeToggle(string text, ref int y)
+        Toggle MakeToggle(string text, bool on, ref int y)
         {
-            var t = new Toggle { Text = text, Checked = true, BackColor = Theme.Card };
+            var t = new Toggle { Text = text, Checked = on, BackColor = Theme.Card };
             t.SetBounds(Pad + 4, y, W - 2 * Pad - 8, 28);
             Controls.Add(t);
             y += 34;
             return t;
+        }
+
+        /// <summary>Braucht der gewählte Ordner Adminrechte? (legt dabei nichts an)</summary>
+        void CheckDir()
+        {
+            needsAdmin = !Setup.IsAdmin && !Setup.CanWrite(dir);
+        }
+
+        void ChooseDir()
+        {
+            string picked = FolderPicker.Pick(this, "Ordner für " + AppInfo.Name + " wählen", Directory.Exists(dir) ? dir : Path.GetDirectoryName(dir));
+            if (picked == null) return;
+            // in einen eigenen Unterordner installieren, außer der gewählte Ordner heißt schon so
+            if (!Path.GetFileName(picked.TrimEnd('\\')).Equals(AppInfo.Name, StringComparison.OrdinalIgnoreCase))
+                picked = Path.Combine(picked, AppInfo.Name);
+            dir = picked;
+            CheckDir();
+            status = "";
+            RefreshState();
         }
 
         void RefreshState()
@@ -269,24 +419,30 @@ namespace WindkanalSetup
             bool inst = Setup.IsInstalled;
             if (uninstallMode)
             {
-                btnMain.Text = confirmRemove ? "Wirklich entfernen" : "Deinstallieren";
+                needsAdmin = inst && !Setup.IsAdmin && !Setup.CanWrite(Setup.InstalledDir);
+                btnMain.Text = confirmRemove ? "Wirklich entfernen" : needsAdmin ? "Als Admin entfernen" : "Deinstallieren";
                 btnMain.Enabled = inst && !busy && !done;
                 btnRemove.Visible = false;
             }
             else
             {
-                btnMain.Text = done && !chkLaunch.Checked ? "Starten" : inst ? "Neu installieren" : "Installieren";
+                btnMain.Text = done && !chkLaunch.Checked ? "Starten" : needsAdmin ? "Als Admin installieren"
+                             : inst ? "Neu installieren" : "Installieren";
                 btnRemove.Visible = inst && !busy;
                 btnRemove.Text = confirmRemove ? "Wirklich entfernen?" : "Deinstallieren";
                 btnMain.Enabled = !busy;
+                btnDir.Enabled = !busy && !done;
             }
             if (!busy && !done && status.Length == 0)
             {
                 if (uninstallMode && !inst) SetStatus(AppInfo.Name + " ist nicht installiert.", "", Theme.Muted);
-                else if (inst) SetStatus(AppInfo.Name + " ist installiert.", Setup.Folder, Theme.Green);
-                else SetStatus("Bereit zur Installation.", "Für dich allein, ohne Admin-Rechte: " + Setup.Folder, Theme.Muted);
+                else if (uninstallMode && needsAdmin) SetStatus("Zum Entfernen braucht es Administratorrechte.", "Windows fragt beim Deinstallieren nach.", Theme.Orange);
+                else if (uninstallMode) SetStatus(AppInfo.Name + " ist installiert.", "Deinstallieren entfernt Programm, Verknüpfungen und den Eintrag in Windows.", Theme.Green);
+                else if (needsAdmin) SetStatus("Für diesen Ordner braucht es Administratorrechte.", "Windows fragt beim Installieren nach. Oder einen anderen Ordner wählen.", Theme.Orange);
+                else if (inst) SetStatus(AppInfo.Name + " ist installiert.", "Neu installieren ersetzt das Programm durch diese Version " + AppInfo.Version + ".", Theme.Green);
+                else SetStatus("Bereit zur Installation.", "Ohne Adminrechte, solange der Ordner dir gehört.", Theme.Muted);
             }
-            foreach (var b in new[] { btnMain, btnRemove, btnClose }) b.Invalidate();
+            foreach (var b in new[] { btnMain, btnRemove, btnClose, btnDir }) b.Invalidate();
             Invalidate();
         }
 
@@ -296,14 +452,28 @@ namespace WindkanalSetup
             Invalidate(new Rectangle(0, statusTop, W, 60));
         }
 
+        string AdminArgs(bool uninstall)
+        {
+            if (uninstall) return "/uninstall /now";
+            return "/install /dir=\"" + dir + "\" /desktop=" + (chkDesktop.Checked ? 1 : 0) + " /startmenu=" + (chkStart.Checked ? 1 : 0)
+                   + " /launch=" + (chkLaunch.Checked ? 1 : 0);
+        }
+
         void OnMain()
         {
             if (uninstallMode) { OnRemove(); return; }
-            if (done && !chkLaunch.Checked) { Launch(); Close(); return; }
-            Run("Wird installiert …", () => Setup.Install(chkDesktop.Checked, chkStart.Checked), () =>
+            if (done && !chkLaunch.Checked) { Setup.Launch(dir); Close(); return; }
+            if (needsAdmin)
             {
-                if (chkLaunch.Checked) { Launch(); Close(); return; }
-                SetStatus("Installiert.", "Starten über das Startmenü oder direkt hier.", Theme.Green);
+                if (Setup.RestartAsAdmin(AdminArgs(false))) Close();
+                else SetStatus("Ohne Administratorrechte geht dieser Ordner nicht.", "Einen anderen Ordner wählen, z. B. den Vorschlag im eigenen Benutzerordner.", Theme.Orange);
+                return;
+            }
+            string target = dir;
+            Run("Wird installiert …", () => Setup.Install(target, chkDesktop.Checked, chkStart.Checked), () =>
+            {
+                if (chkLaunch.Checked) { Setup.Launch(target); Close(); return; }
+                SetStatus("Installiert.", target, Theme.Green);
             });
         }
 
@@ -319,12 +489,14 @@ namespace WindkanalSetup
                 return;
             }
             confirmRemove = false;
+            string inst = Setup.InstalledDir;
+            if (inst != null && !Setup.IsAdmin && !Setup.CanWrite(inst))
+            {
+                if (Setup.RestartAsAdmin(AdminArgs(true))) Close();
+                else SetStatus("Ohne Administratorrechte lässt sich der Ordner nicht löschen.", inst, Theme.Orange);
+                return;
+            }
             Run("Wird entfernt …", Setup.Uninstall, () => SetStatus(AppInfo.Name + " wurde vollständig entfernt.", "", Theme.Green));
-        }
-
-        void Launch()
-        {
-            try { Process.Start(new ProcessStartInfo(Setup.AppPath) { WorkingDirectory = Setup.Folder }); } catch { }
         }
 
         /// <summary>Arbeit im Hintergrund, dazu ein Fortschritt, der mindestens eine knappe Sekunde läuft (sonst wirkt es abgehackt).</summary>
@@ -391,8 +563,14 @@ namespace WindkanalSetup
             int vw = Theme.ChipWidth(ver);
             Theme.Chip(g, ver, W - Pad - vw, ty + 9, Theme.Muted, Theme.Ctl);
 
-            // Trennlinie über den Optionen
-            using (var p = new Pen(Theme.Border)) g.DrawLine(p, Pad, optionsTop - 12, W - Pad, optionsTop - 12);
+            using (var p = new Pen(Theme.Border)) g.DrawLine(p, Pad, dirTop - 12, W - Pad, dirTop - 12);
+            // Zielordner (beim Entfernen: der installierte Ordner)
+            if (!uninstallMode)
+            {
+                Theme.Draw(g, "INSTALLIEREN NACH", Theme.SmallMed, Theme.Muted, new Rectangle(Pad + 4, dirTop, 300, 16), TextFormatFlags.VerticalCenter);
+                Theme.Draw(g, dir, Theme.Base, Theme.Text, new Rectangle(Pad + 4, dirTop + 18, W - 2 * Pad - 130, 28),
+                           TextFormatFlags.VerticalCenter | TextFormatFlags.PathEllipsis);
+            }
 
             // Zustand: Text, darunter Details oder Fortschritt
             Theme.Draw(g, status, Theme.Label, statusColor, new Rectangle(Pad + 4, statusTop, W - 2 * Pad, 22), TextFormatFlags.VerticalCenter);
@@ -402,6 +580,69 @@ namespace WindkanalSetup
             else if (detail.Length > 0)
                 Theme.Draw(g, detail, Theme.Small, Theme.Muted, new Rectangle(Pad + 4, statusTop + 24, W - 2 * Pad - 8, 34),
                            TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+        }
+    }
+
+    /// <summary>Moderne Windows-Ordnerauswahl (wie im Explorer) über IFileOpenDialog mit „nur Ordner“.</summary>
+    static class FolderPicker
+    {
+        public static string Pick(IWin32Window owner, string title, string start)
+        {
+            IFileOpenDialog dlg = null;
+            try
+            {
+                dlg = (IFileOpenDialog)new FileOpenDialogCom();
+                dlg.SetOptions(0x20 | 0x40 | 0x800);   // Ordner wählen, nur Dateisystem, Pfad muss existieren
+                dlg.SetTitle(title);
+                if (!string.IsNullOrEmpty(start) && Directory.Exists(start))
+                {
+                    IShellItem folder;
+                    if (SHCreateItemFromParsingName(start, IntPtr.Zero, typeof(IShellItem).GUID, out folder) == 0) dlg.SetFolder(folder);
+                }
+                if (dlg.Show(owner != null ? owner.Handle : IntPtr.Zero) != 0) return null;   // abgebrochen
+                IShellItem item;
+                dlg.GetResult(out item);
+                IntPtr p;
+                item.GetDisplayName(0x80058000, out p);   // SIGDN_FILESYSPATH
+                string path = Marshal.PtrToStringUni(p);
+                Marshal.FreeCoTaskMem(p);
+                return path;
+            }
+            catch
+            {
+                // Rückfall: klassische Ordnerauswahl
+                using (var f = new FolderBrowserDialog { Description = title, SelectedPath = start ?? "" })
+                    return f.ShowDialog(owner) == DialogResult.OK ? f.SelectedPath : null;
+            }
+            finally { if (dlg != null) Marshal.ReleaseComObject(dlg); }
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern int SHCreateItemFromParsingName(string path, IntPtr bindCtx, [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IShellItem item);
+
+        [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")]
+        class FileOpenDialogCom { }
+
+        // nur die benutzten Methoden haben Parameter; die übrigen halten die Reihenfolge der vtable
+        [ComImport, Guid("d57c7288-d4ad-4768-be02-9d969532d960"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IFileOpenDialog
+        {
+            [PreserveSig] int Show(IntPtr parent);
+            void _SetFileTypes(); void _SetFileTypeIndex(); void _GetFileTypeIndex(); void _Advise(); void _Unadvise();
+            void SetOptions(uint options);
+            void _GetOptions(); void _SetDefaultFolder();
+            void SetFolder(IShellItem item);
+            void _GetFolder(); void _GetCurrentSelection(); void _SetFileName(); void _GetFileName();
+            void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+            void _SetOkButtonLabel(); void _SetFileNameLabel();
+            void GetResult(out IShellItem item);
+        }
+
+        [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IShellItem
+        {
+            void _BindToHandler(); void _GetParent();
+            void GetDisplayName(uint sigdn, out IntPtr name);
         }
     }
 }

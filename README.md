@@ -4,7 +4,7 @@ Virtueller Windkanal für Windows in **2D und 3D**: Strömung um Zylinder, Tragf
 Formen (2D gezeichnet, 3D als STL/OBJ geladen), mit Rauch, Stromlinien, Druck- und Wirbelansicht sowie Messwerten
 für Widerstand und Auftrieb.
 
-**Version 1.0.0** (erste stabile 2D- und 3D-Version):
+**Version 1.0.1** (erste stabile 2D- und 3D-Version, ab 1.0.1 mit neuem Installer):
 - **3D:** D3Q19-Löser auf der Grafikkarte (FP16-Speicher, Turbulenzmodell LES bis Re 1 Mio.), STL/OBJ-Import mit
   automatischer Ausrichtung, Stromlinien, echter Rauch, Schnittebene, Oberflächendruck, Kräfte in N und kg.
 - **2D:** animiertes DRS, Macarena-Flügel, aktive Aero 2026, Landeklappe (eigene Kategorie, Echtzeit-Modus),
@@ -45,7 +45,7 @@ powershell -ExecutionPolicy Bypass -File Quellcode\build.ps1
 Quellcode\bin\Windkanal2D.exe
 ```
 
-Danach liegen `Windkanal2D-Setup.exe` und `Windkanal2D-Deinstallieren.exe` im Projektordner.
+Danach liegt `Windkanal-Setup.exe` im Projektordner (Installer und Deinstaller in einer Datei).
 
 **GPU:** Es muss nichts zusätzlich installiert werden. Die GPU-Rechnung nutzt OpenCL, das in jedem aktuellen
 Grafiktreiber (NVIDIA, AMD, Intel) steckt (`C:\Windows\System32\OpenCL.dll`). Findet die App keine nutzbare GPU,
@@ -96,7 +96,7 @@ Dazu: Re = U·L/ν mit ν = 1,516·10⁻⁵ m²/s und ρ = 1,204 kg/m³. Bezugsl
 oder (bei Auto und eigener Form) die gemessene Stirnhöhe in Zellen.
 
 ### Installer
-`Windkanal2D-Setup.exe` mit Fenster (Installieren / Deinstallieren), Verknüpfungen auf Wunsch, ohne Admin-Rechte. Details in Abschnitt 8.
+`Windkanal-Setup.exe` mit Fenster (Installieren / Deinstallieren), Zielordner wählbar, Verknüpfungen auf Wunsch. Details in Abschnitt 8.
 
 ### Status der Arbeit (Chronik, was nacheinander gemacht und entschieden wurde)
 
@@ -361,18 +361,20 @@ Quellcode/
 **Build-Hinweise**
 - `build.ps1` braucht **kein .NET SDK**. Es nutzt `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. Dieser Compiler versteht nur ältere C#-Syntax (etwa C# 5), also zum Beispiel kein `?.` und keine String-Interpolation `$"..."`. Das gilt auch für `GpuLbm.cs`; der OpenCL-Kernel steht dort als Text und wird beim Start vom Grafiktreiber übersetzt.
 - Die App ist 64-Bit (`/platform:x64`), `unsafe` ist aktiviert, `System.Windows.Forms` und `System.Drawing` werden gebraucht.
-- Ergebnisse: `Quellcode/bin/Windkanal2D.exe`, `Quellcode/bin/Setup.exe`, im Projektordner `Windkanal2D-Setup.exe` und `Windkanal2D-Deinstallieren.exe`. Alle `.exe` sind per `.gitignore` ausgeschlossen.
+- Ergebnisse: `Quellcode/bin/Windkanal2D.exe`, `Quellcode/bin/Setup.exe`, im Projektordner `Windkanal-Setup.exe`. Alle `.exe` sind per `.gitignore` ausgeschlossen.
 
 ---
 
 ## 8. Installer und Deinstallierer
 
-Eine einzige `Setup.cs`, die App ist als eingebettete Ressource (`Payload.Windkanal2D.exe`) im Setup enthalten.
+Eine einzige Datei `Windkanal-Setup.exe` (`Setup.cs`) für alles; die App ist als eingebettete Ressource (`Payload.Windkanal2D.exe`) enthalten.
 
-- **Ziel:** `%LOCALAPPDATA%\Programs\Windkanal2D\` (nur für den aktuellen Benutzer, keine Admin-Rechte)
-- **Angelegt:** `Windkanal2D.exe`, `Deinstallieren.exe` (Kopie des Setups), Startmenü-Verknüpfung, optional Desktop-Verknüpfung, Registry-Eintrag `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Windkanal2D` (erscheint in Windows unter "Apps")
-- **Deinstallation:** wird erkannt, wenn die Datei "deinstall" im Namen hat oder mit `/uninstall` gestartet wird. Löscht Dateien, Verknüpfungen, Registry und den Ordner (der Ordner wird per verzögertem `cmd` entfernt, weil sich die laufende Datei nicht selbst löschen kann).
-- **Stiller Modus:** `/silent` (für Tests): `Windkanal2D-Setup.exe /silent` installiert, `Deinstallieren.exe /uninstall /silent` entfernt.
+- **Ziel frei wählbar** („Ändern …“ öffnet die Windows-Ordnerauswahl). Vorschlag: bestehende Installation, sonst
+  `%LOCALAPPDATA%\Programs\Windkanal\` (ohne Adminrechte). Ordner, die Adminrechte brauchen (z. B. `Programme`), werden
+  erkannt; der Installer startet sich dann mit Adminrechten neu (`/install /dir=… /desktop= /startmenu= /launch=`).
+- **Angelegt:** `Windkanal2D.exe`, `Deinstallieren.exe` (Kopie des Setups), Startmenü-Verknüpfung, optional Desktop-Verknüpfung, Registry-Eintrag `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Windkanal2D` mit `InstallLocation` (erscheint in Windows unter "Apps")
+- **Deinstallation:** wird erkannt, wenn die Datei "deinstall" im Namen hat oder mit `/uninstall` gestartet wird. Findet den Ordner über `InstallLocation`, löscht Programmdateien, Verknüpfungen, Registry und den Ordner, wenn er danach leer ist (per verzögertem `cmd`, weil sich die laufende Datei nicht selbst löschen kann).
+- **Stiller Modus:** `/silent` (für Tests): `Windkanal-Setup.exe /silent [/dir=…]` installiert, `Deinstallieren.exe /uninstall /silent` entfernt.
 - Läuft die App beim Installieren oder Deinstallieren, wird sie vorher beendet.
 
 ---

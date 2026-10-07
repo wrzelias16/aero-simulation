@@ -4,7 +4,7 @@ Virtueller Windkanal für Windows in C# (.NET Framework 4.8), Windows-.exe.
 Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steht in `README.md`.
 
 ## Stand
-- **v1.0.0** (Release auf GitHub, von Elias so gewünscht): erste stabile Version mit 2D **und** 3D, alles unten beschrieben.
+- **v1.0.1** (aktuell; v1.0.0 = erste stabile Version, Release auf GitHub, von Elias so gewünscht; 1.0.1 bringt den neuen Ein-Datei-Installer): erste stabile Version mit 2D **und** 3D, alles unten beschrieben.
 - **v0.0.1** = frühere reine 2D-Version ("Windkanal 2D").
 - GPU-Löser (OpenCL, CPU-Fallback), neues UI (Schrift Outfit, Hell/Dunkel, Startfenster), Rauchmodus,
   79 Modelle als Textdateien (`Quellcode/Modelle/LIESMICH.md`, keine echten CAD-Daten), Anzeige "Feinstes Detail".
@@ -76,7 +76,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## Bauen und Testen
 - Bauen (ohne SDK, nutzt csc aus .NET Framework 4.8):
   `powershell -ExecutionPolicy Bypass -File Quellcode\build.ps1` -> `Quellcode\bin\Windkanal2D.exe`
-- Installer: `Quellcode/Setup` (erzeugt `Windkanal2D-Setup.exe`), im Programm-Design: wird mit `App/Ui.cs`, `App/FlowStage.cs`,
+- Installer: `Quellcode/Setup` (erzeugt **eine** Datei `Windkanal-Setup.exe` = Installer + Deinstaller; Zielordner wählbar
+  mit moderner Ordnerauswahl, Neustart mit Adminrechten für z. B. `Programme`, Ordner steht in `InstallLocation`), im Programm-Design: wird mit `App/Ui.cs`, `App/FlowStage.cs`,
   `App/AppInfo.cs` (+ Abhängigkeiten) und den Outfit-Schriften gebaut. Rückfragen im Fenster statt Meldungsfenster.
   Anzeige „Windkanal“, Ordner/Registry/exe behalten die alten Namen (Windkanal2D), damit Updates die Installation finden.
 - Versionsnummer an einer Stelle: `App/AppInfo.cs` (Startfenster, Installer, Windows-Apps-Eintrag).
