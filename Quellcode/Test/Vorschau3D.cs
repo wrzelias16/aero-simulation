@@ -101,9 +101,35 @@ static class Vorschau3D
             if (!ok) fails++;
         }
 
-        // 3. Fenster unsichtbar öffnen, rechnen lassen, Bilder speichern
+        // 2d. Startfenster: unsichtbar zeigen und nach 1,5 s als Bild speichern
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        {
+            var sp = (Form)Activator.CreateInstance(typeof(Windkanal.Splash), true);
+            sp.StartPosition = FormStartPosition.Manual;
+            sp.Location = new Point(-4000, -4000);
+            sp.ShowInTaskbar = false;
+            var ts = new Timer { Interval = 1500 };
+            ts.Tick += delegate
+            {
+                ts.Stop();
+                ((Windkanal.Splash)sp).Report("Rechengitter wird vorbereitet …", 0.62f);
+                Application.DoEvents();
+                System.Threading.Thread.Sleep(300);
+                Application.DoEvents();
+                using (var bmp = new Bitmap(sp.Width, sp.Height))
+                {
+                    sp.DrawToBitmap(bmp, new Rectangle(0, 0, sp.Width, sp.Height));
+                    bmp.Save(Path.Combine(dir, "startfenster.png"), ImageFormat.Png);
+                }
+                Console.WriteLine("Bild gespeichert: startfenster.png");
+                sp.Close();
+            };
+            sp.Shown += delegate { ts.Start(); };
+            Application.Run(sp);
+        }
+
+        // 3. Fenster unsichtbar öffnen, rechnen lassen, Bilder speichern
         var form = new Form3D();
         form.StartPosition = FormStartPosition.Manual;
         form.Location = new Point(-4000, -4000);

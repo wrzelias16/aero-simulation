@@ -29,6 +29,8 @@ namespace Windkanal
 
         Model model = ModelLibrary.Find("zylinder") ?? ModelLibrary.All[0];
         bool[] customMask;
+        /// <summary>Modell, auf das gezeichnet wurde (null = leere Fläche); „Neu“ stellt es ohne die Striche wieder her.</summary>
+        Model drawBase;
         int resIndex = 1, sizePercent = 10, angleDeg = 0;
         double reynolds = 100;
         float refLen = 24, frontalCells;
@@ -167,10 +169,10 @@ namespace Windkanal
             btnInfo = new FlatButton { Icon = "", BackColor = Theme.Bg };
             btnTheme = new FlatButton { BackColor = Theme.Bg };
             if (Theme.Icons == null) { btnReset.Text = "Neu"; btnInfo.Text = "?"; }
-            tips.SetToolTip(btnReset, "Neu starten");
+            tips.SetToolTip(btnReset, "Neu starten: Strömung zurücksetzen und eigene Zeichnungen löschen");
             tips.SetToolTip(btnInfo, "Physik & Grenzen der Simulation");
             btnRun.Click += delegate { SetRunning(!running); };
-            btnReset.Click += delegate { ResetFlow(); };
+            btnReset.Click += delegate { ResetAll(); };
             btnInfo.Click += delegate { ShowInfo(); };
             btnTheme.Click += delegate { SwitchTheme(); };
             UpdateThemeButton();
@@ -251,6 +253,7 @@ namespace Windkanal
             btnClear.Click += delegate
             {
                 customMask = new bool[solver.N];
+                drawBase = null;
                 SelectShape(ModelLibrary.Custom());
                 RebuildGeometry(true);
             };
@@ -528,6 +531,7 @@ namespace Windkanal
             {
                 // aktuelle Form als Ausgangspunkt zum Weiterzeichnen übernehmen
                 customMask = (bool[])solver.Solid.Clone();
+                drawBase = model.IsCustom ? drawBase : model;
                 model = k;
                 UpdateModelHint();
                 UpdateSliderLabels();
@@ -913,6 +917,32 @@ namespace Windkanal
             solver.U0 = Solver.ChooseU0(reynolds, L, frontalCells / (double)solver.NY);
             solver.Nu = (float)(solver.U0 * L / reynolds);
             if (compare) { UpdateFlowParamsB(); statsB.Clear(); }
+        }
+
+        /// <summary>
+        /// Knopf „Neu“: eigene Zeichnungen löschen (zurück zum Modell, auf das gezeichnet wurde, sonst leere Fläche)
+        /// und die Strömung neu starten.
+        /// </summary>
+        void ResetAll()
+        {
+            if (model.IsCustom)
+            {
+                if (drawBase != null && !drawBase.IsCustom)
+                {
+                    var m = drawBase;
+                    drawBase = null;
+                    SelectShape(m);
+                    RebuildGeometry(true);
+                }
+                else
+                {
+                    customMask = new bool[solver.N];
+                    RebuildGeometry(true);
+                }
+                ShowMessage("Zeichnungen gelöscht, Strömung neu gestartet");
+                return;
+            }
+            ResetFlow();
         }
 
         void ResetFlow()
@@ -1412,6 +1442,7 @@ namespace Windkanal
             var g = renderer.ToGrid(solver, p.X, p.Y);
             if (!model.IsCustom)
             {
+                drawBase = model;   // darauf wird gezeichnet; „Neu“ stellt es wieder her
                 customMask = (bool[])solver.Solid.Clone();
                 SelectShape(ModelLibrary.Custom());
             }

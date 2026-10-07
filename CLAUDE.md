@@ -45,6 +45,7 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## 2D: bewegliche Teile
 - Modellformat kann bewegliche Teile (`bewegung: x y grad` am Teil, `bewegung-name/-dauer/-tempo`, `bezug-meter`).
   Dauer in Rechenschritten = gleich viele Überströmungen der Bezugslänge wie am echten Auto.
+- Knopf „Neu“ löscht eigene Zeichnungen (zurück zum Modell, auf das gezeichnet wurde, sonst leere Fläche).
 - Modelle: Heckflügel mit DRS (2025: < 400 ms, 85 mm, Art. 3.10.10), Heckflügel 2026 „Macarena“ (Ferrari SF-26,
   Flap dreht 180°; Drehpunkt Sehnenmitte = Annahme), F1-Wagen mit animiertem DRS. Knopf im Strömungsbild, Taste D.
 - Tempo-Auswahl neben dem Knopf: Echtzeit-Faktoren 0,25x … 4x (Bewegung nach der Uhr, DRS bei 1x in 0,40 s, gemessen
@@ -71,7 +72,11 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## Bauen und Testen
 - Bauen (ohne SDK, nutzt csc aus .NET Framework 4.8):
   `powershell -ExecutionPolicy Bypass -File Quellcode\build.ps1` -> `Quellcode\bin\Windkanal2D.exe`
-- Installer: `Quellcode/Setup` (erzeugt `Windkanal2D-Setup.exe`). Test: `Quellcode/Test/ValidationTest.cs`
+- Installer: `Quellcode/Setup` (erzeugt `Windkanal2D-Setup.exe`), im Programm-Design: wird mit `App/Ui.cs`, `App/FlowStage.cs`,
+  `App/AppInfo.cs` (+ Abhängigkeiten) und den Outfit-Schriften gebaut. Rückfragen im Fenster statt Meldungsfenster.
+  Anzeige „Windkanal“, Ordner/Registry/exe behalten die alten Namen (Windkanal2D), damit Updates die Installation finden.
+- Versionsnummer an einer Stelle: `App/AppInfo.cs` (Startfenster, Installer, Windows-Apps-Eintrag).
+- Startfenster und Installer zeigen `FlowStage` (angedeutete Wirbelstraße + Rauch, keine echte Simulation). Test: `Quellcode/Test/ValidationTest.cs`
   (muss nach Löser-Änderungen weiter dieselben Ergebnisse liefern).
 - `*.exe` und `Quellcode/bin/` stehen in `.gitignore` und kommen nicht über GitHub; auf jedem Rechner neu bauen.
 

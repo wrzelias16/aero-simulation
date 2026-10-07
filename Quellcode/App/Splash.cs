@@ -12,11 +12,12 @@ namespace Windkanal
     /// </summary>
     sealed class Splash : Form
     {
-        const int W = 520, H = 330, Pad = 18, StageH = 172;
+        const int W = 640, H = 420, Pad = 16, StageH = 262;
 
         // eigene Schriften, weil dieses Fenster in einem anderen Thread zeichnet als das Hauptfenster
         readonly Font fWord = Theme.Medium(16f), fSmall = Theme.Regular(9f), fSmallMed = Theme.Medium(8.75f);
         readonly Stopwatch clock = Stopwatch.StartNew();
+        readonly FlowStage stage = new FlowStage();
         readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 15 };
         string status = "Wird gestartet …";
         float target = 0.05f, shown;
@@ -120,9 +121,15 @@ namespace Windkanal
             float t = (float)clock.Elapsed.TotalSeconds;
             using (var p = new Pen(Theme.Border)) g.DrawRectangle(p, 0, 0, W - 1, H - 1);
 
-            var stage = new RectangleF(Pad, Pad, W - 2 * Pad, StageH);
-            Theme.FillRound(g, Theme.Surface, stage, 16);
-            DrawStage(g, stage, t);
+            // Bühne: Wirbelstraße hinter einem Zylinder in den Farben des Programms, Rauch fließt mit
+            var sr = new RectangleF(Pad, Pad, W - 2 * Pad, StageH);
+            stage.Draw(g, sr, t, 12, Theme.Dark ? Color.FromArgb(205, 209, 216) : Color.FromArgb(70, 76, 86));
+            // Beschriftung mit eigener Schrift (dieses Fenster zeichnet in einem anderen Thread als das Hauptfenster)
+            const string label = "Kármánsche Wirbelstraße";
+            int lw = TextRenderer.MeasureText(label, fSmallMed, Size.Empty, TextFormatFlags.NoPadding).Width + 20;
+            var lr = new RectangleF(sr.X + 12, sr.Bottom - 36, lw, 24);
+            Theme.FillRound(g, Color.FromArgb(150, 12, 14, 18), lr, 12);
+            Theme.Draw(g, label, fSmallMed, Color.White, Rectangle.Round(lr), TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
 
             int ty = Pad + StageH + 20;
             Theme.DrawLogo(g, Pad + 2, ty, 42, Theme.Ink, Theme.OnInk);
@@ -134,59 +141,10 @@ namespace Windkanal
             Theme.Draw(g, ver, fSmallMed, Theme.Muted, new Rectangle(W - Pad - vw, ty + 9, vw, 24), TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
 
             // Fortschritt als Kapseln
-            Theme.Capsules(g, new RectangleF(Pad + 2, H - 52, W - 2 * Pad - 4, 12), 40, Math.Min(1, shown), Theme.Ink, Theme.Track);
+            Theme.Capsules(g, new RectangleF(Pad + 2, H - 52, W - 2 * Pad - 4, 12), 48, Math.Min(1, shown), Theme.Accent, Theme.Track);
             Theme.Draw(g, status, fSmall, Theme.Muted, new Rectangle(Pad + 2, H - 34, W - 140, 20), TextFormatFlags.VerticalCenter);
             Theme.Draw(g, (int)Math.Round(Math.Min(1, shown) * 100) + " %", fSmallMed, Theme.Text, new Rectangle(W - Pad - 102, H - 34, 100, 20),
                        TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
-        }
-
-        /// <summary>Mini-Windkanal: Stromlinien um einen Zylinder, Rauchteilchen wandern mit, dahinter pendelt die Wirbelstraße.</summary>
-        static void DrawStage(Graphics g, RectangleF r, float t)
-        {
-            var clip = g.Clip;
-            using (var path = Theme.Round(r, 16)) g.SetClip(path);
-            float cx = r.X + 130, cy = r.Y + r.Height / 2, rad = 19;
-            const int lines = 9;
-            for (int i = 0; i < lines; i++)
-            {
-                float y0 = r.Y + 18 + (r.Height - 36) * i / (lines - 1f);
-                var pts = new PointF[64];
-                for (int k = 0; k < pts.Length; k++)
-                {
-                    float x = r.X + r.Width * k / (pts.Length - 1f);
-                    pts[k] = new PointF(x, LineY(x, y0, cx, cy, t));
-                }
-                using (var p = new Pen(Theme.Track, 1.2f)) g.DrawLines(p, pts);
-
-                for (int k = 0; k < 7; k++)
-                {
-                    float x = r.X + ((t * 110 + k * (r.Width / 6.5f) + i * 37) % (r.Width + 30)) - 15;
-                    float y = LineY(x, y0, cx, cy, t);
-                    float d = (x - cx) / 55f, dy = (y0 - cy) / 40f;
-                    float fast = (float)(Math.Exp(-d * d) * Math.Exp(-dy * dy));
-                    float s = 4 + 2.5f * fast;
-                    Color c = fast > 0.45f ? Theme.Pink : Theme.Accent;   // schnell am Zylinder vorbei: pink
-                    using (var b = new SolidBrush(c)) g.FillEllipse(b, x - s / 2, y - s / 2, s, s);
-                }
-            }
-            using (var b = new SolidBrush(Theme.Ink)) g.FillEllipse(b, cx - rad, cy - rad, 2 * rad, 2 * rad);
-            g.Clip = clip;
-        }
-
-        static float LineY(float x, float y0, float cx, float cy, float t)
-        {
-            float d = (x - cx) / 44f;
-            float dist = y0 - cy;
-            float side = dist < 0 ? -1 : 1;
-            float push = 30 * (float)Math.Exp(-dist * dist / 900f) + 3;
-            float y = y0 + side * push * (float)Math.Exp(-d * d);
-            if (x > cx)   // Wirbelstraße hinter dem Zylinder
-            {
-                float behind = Math.Min(1, (x - cx) / 110f);
-                float near = (float)Math.Exp(-dist * dist / 2500f);
-                y += behind * near * 9 * (float)Math.Sin((x - cx) * 0.045f - t * 5.0f);
-            }
-            return y;
         }
     }
 }

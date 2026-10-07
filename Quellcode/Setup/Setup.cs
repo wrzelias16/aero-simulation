@@ -3,58 +3,47 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using Windkanal;
 
-[assembly: AssemblyTitle("Windkanal 2D – Setup")]
-[assembly: AssemblyProduct("Windkanal 2D")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyTitle("Windkanal – Setup")]
+[assembly: AssemblyProduct("Windkanal")]
+[assembly: AssemblyVersion("0.0.2.0")]
+[assembly: AssemblyFileVersion("0.0.2.0")]
 
 namespace WindkanalSetup
 {
     /// <summary>
-    /// Installiert/deinstalliert Windkanal 2D für den aktuellen Benutzer (keine Admin-Rechte nötig).
-    /// Start mit /uninstall oder als "...Deinstallieren.exe" öffnet direkt die Deinstallation.
+    /// Installiert/deinstalliert Windkanal für den aktuellen Benutzer (keine Admin-Rechte nötig).
+    /// Start mit /uninstall oder als "...Deinstallieren.exe" öffnet direkt die Deinstallation, /silent ohne Fenster.
+    /// Oberfläche im Design des Programms (Theme, Schrift Outfit, Hell/Dunkel wie gemerkt).
     /// </summary>
     static class Setup
     {
-        const string AppName = "Windkanal 2D";
         const string AppExe = "Windkanal2D.exe";
         const string UninstallExe = "Deinstallieren.exe";
-        const string Version = "1.0.0";
+        // Ordner, Registry-Schlüssel und Programmdatei behalten ihre alten Namen, damit Updates die alte Installation finden
         const string RegKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Windkanal2D";
-
-        static readonly Color CBg = Color.FromArgb(29, 33, 40);
-        static readonly Color CCtl = Color.FromArgb(42, 47, 56);
-        static readonly Color CBorder = Color.FromArgb(62, 68, 80);
-        static readonly Color CText = Color.FromArgb(226, 229, 234);
-        static readonly Color CMuted = Color.FromArgb(145, 152, 164);
-        static readonly Color CAccent = Color.FromArgb(77, 163, 255);
+        static readonly string[] OldLinkNames = { "Windkanal 2D" };
 
         static string InstallDir
         {
-            get
-            {
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                                    "Programs", "Windkanal2D");
-            }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Windkanal2D"); }
         }
 
-        static string StartMenuLink
+        static string Link(Environment.SpecialFolder where, string name)
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName + ".lnk"); }
+            return Path.Combine(Environment.GetFolderPath(where), name + ".lnk");
         }
 
-        static string DesktopLink
-        {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"); }
-        }
+        static string StartMenuLink { get { return Link(Environment.SpecialFolder.Programs, AppInfo.Name); } }
+        static string DesktopLink { get { return Link(Environment.SpecialFolder.DesktopDirectory, AppInfo.Name); } }
 
-        static bool IsInstalled
-        {
-            get { return File.Exists(Path.Combine(InstallDir, AppExe)); }
-        }
+        public static bool IsInstalled { get { return File.Exists(Path.Combine(InstallDir, AppExe)); } }
+        public static string AppPath { get { return Path.Combine(InstallDir, AppExe); } }
+        public static string Folder { get { return InstallDir; } }
 
         [STAThread]
         static int Main(string[] args)
@@ -76,33 +65,7 @@ namespace WindkanalSetup
                 }
                 catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
             }
-
-            if (uninstallMode)
-            {
-                if (!IsInstalled && Registry.CurrentUser.OpenSubKey(RegKey) == null)
-                {
-                    MessageBox.Show(AppName + " ist nicht installiert.", AppName + " deinstallieren",
-                                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return 0;
-                }
-                if (MessageBox.Show(AppName + " wirklich vom Computer entfernen?\n\nProgramm, Verknüpfungen und Eintrag in den Windows-Apps werden gelöscht.",
-                                    AppName + " deinstallieren", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-                    return 0;
-                try
-                {
-                    Uninstall();
-                    MessageBox.Show(AppName + " wurde vollständig entfernt.", AppName + " deinstallieren",
-                                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Deinstallation fehlgeschlagen:\n" + ex.Message, AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return 1;
-                }
-                return 0;
-            }
-
-            Application.Run(new SetupForm());
+            Application.Run(new SetupForm(uninstallMode));
             return 0;
         }
 
@@ -125,6 +88,12 @@ namespace WindkanalSetup
             if (!string.Equals(Path.GetFullPath(Application.ExecutablePath), Path.GetFullPath(uninst), StringComparison.OrdinalIgnoreCase))
                 File.Copy(Application.ExecutablePath, uninst, true);
 
+            // alte Verknüpfungen („Windkanal 2D“) durch neue ersetzen
+            foreach (var old in OldLinkNames)
+            {
+                TryDelete(Link(Environment.SpecialFolder.Programs, old));
+                TryDelete(Link(Environment.SpecialFolder.DesktopDirectory, old));
+            }
             if (startMenu) CreateShortcut(StartMenuLink, target, dir);
             else TryDelete(StartMenuLink);
             if (desktop) CreateShortcut(DesktopLink, target, dir);
@@ -133,9 +102,9 @@ namespace WindkanalSetup
             long sizeKb = new FileInfo(target).Length / 1024 + new FileInfo(uninst).Length / 1024;
             using (var k = Registry.CurrentUser.CreateSubKey(RegKey))
             {
-                k.SetValue("DisplayName", AppName);
-                k.SetValue("DisplayVersion", Version);
-                k.SetValue("Publisher", AppName);
+                k.SetValue("DisplayName", AppInfo.Name);
+                k.SetValue("DisplayVersion", AppInfo.Version);
+                k.SetValue("Publisher", AppInfo.Name);
                 k.SetValue("DisplayIcon", target + ",0");
                 k.SetValue("InstallLocation", dir);
                 k.SetValue("UninstallString", "\"" + uninst + "\" /uninstall");
@@ -152,6 +121,11 @@ namespace WindkanalSetup
             CloseRunningApp();
             TryDelete(StartMenuLink);
             TryDelete(DesktopLink);
+            foreach (var old in OldLinkNames)
+            {
+                TryDelete(Link(Environment.SpecialFolder.Programs, old));
+                TryDelete(Link(Environment.SpecialFolder.DesktopDirectory, old));
+            }
             Registry.CurrentUser.DeleteSubKeyTree(RegKey, false);
             Registry.CurrentUser.DeleteSubKeyTree(@"Software\Windkanal2D", false);   // gemerktes Design
 
@@ -171,12 +145,9 @@ namespace WindkanalSetup
             {
                 // Das laufende Deinstallationsprogramm kann sich nicht selbst löschen:
                 // Ordner wird kurz nach dem Beenden entfernt.
-                var psi = new ProcessStartInfo("cmd.exe",
-                    "/c timeout /t 2 /nobreak >nul & rmdir /s /q \"" + dir + "\"")
+                var psi = new ProcessStartInfo("cmd.exe", "/c timeout /t 2 /nobreak >nul & rmdir /s /q \"" + dir + "\"")
                 {
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
+                    CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden
                 };
                 Process.Start(psi);
             }
@@ -213,123 +184,223 @@ namespace WindkanalSetup
             st.InvokeMember("TargetPath", BindingFlags.SetProperty, null, sc, new object[] { target });
             st.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, sc, new object[] { workDir });
             st.InvokeMember("IconLocation", BindingFlags.SetProperty, null, sc, new object[] { target + ",0" });
-            st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "2D-Windkanal-Simulation" });
+            st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "Strömungssimulation in 2D und 3D" });
             st.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
         }
+    }
 
-        // ------------------------------------------------------------ Oberfläche
+    /// <summary>
+    /// Installer-Fenster im Design des Programms: oben die Strömungsbühne, darunter Name und Version,
+    /// Optionen als Schalter, Fortschritt als Kapseln, Rückfragen direkt im Fenster (keine Windows-Meldungsfenster).
+    /// </summary>
+    sealed class SetupForm : Form
+    {
+        const int W = 600, Pad = 16, StageH = 196;
+        readonly bool uninstallMode;
+        readonly FlowStage stage = new FlowStage(320);
+        readonly Stopwatch clock = Stopwatch.StartNew();
+        readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 16 };
+        readonly Toggle chkStart, chkDesktop, chkLaunch;
+        readonly FlatButton btnMain, btnRemove, btnClose;
+        readonly int optionsTop, statusTop;
+        string status = "", detail = "";
+        Color statusColor;
+        float progress = -1, progressTarget;
+        bool busy, confirmRemove, done;
+        double confirmUntil;
 
-        sealed class SetupForm : Form
+        public SetupForm(bool uninstallMode)
         {
-            readonly CheckBox chkDesktop, chkStart, chkLaunch;
-            readonly Button btnInstall, btnUninstall;
-            readonly Label lblState;
+            this.uninstallMode = uninstallMode;
+            Text = AppInfo.Name + (uninstallMode ? " – entfernen" : " – Installation");
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            BackColor = Theme.Card;
+            ForeColor = Theme.Text;
+            Font = Theme.Base;
+            DoubleBuffered = true;
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
-            public SetupForm()
+            int y = Pad + StageH + 92;
+            optionsTop = y;
+            chkStart = MakeToggle("Verknüpfung im Startmenü", ref y);
+            chkDesktop = MakeToggle("Verknüpfung auf dem Desktop", ref y);
+            chkLaunch = MakeToggle("Nach der Installation starten", ref y);
+            if (uninstallMode) { chkStart.Visible = chkDesktop.Visible = chkLaunch.Visible = false; y = optionsTop + 20; }
+            statusTop = y + 10;
+            int by = statusTop + 64;
+            ClientSize = new Size(W, by + 40 + Pad + 4);
+
+            btnMain = new FlatButton { Primary = true, BackColor = Theme.Card };
+            btnMain.SetBounds(W - Pad - 170, by, 170, 40);
+            btnRemove = new FlatButton { Text = "Deinstallieren", BackColor = Theme.Card };
+            btnRemove.SetBounds(Pad, by, 150, 40);
+            btnClose = new FlatButton { Text = "Schließen", BackColor = Theme.Card };
+            btnClose.SetBounds(W - Pad - 170 - 10 - 120, by, 120, 40);
+            btnMain.Click += delegate { OnMain(); };
+            btnRemove.Click += delegate { OnRemove(); };
+            btnClose.Click += delegate { Close(); };
+            Controls.AddRange(new Control[] { btnMain, btnRemove, btnClose });
+
+            timer.Tick += delegate { OnTick(); };
+            Shown += delegate { timer.Start(); };
+            FormClosed += delegate { timer.Stop(); };
+            RefreshState();
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Theme.DarkTitleBar(Handle);
+        }
+
+        Toggle MakeToggle(string text, ref int y)
+        {
+            var t = new Toggle { Text = text, Checked = true, BackColor = Theme.Card };
+            t.SetBounds(Pad + 4, y, W - 2 * Pad - 8, 28);
+            Controls.Add(t);
+            y += 34;
+            return t;
+        }
+
+        void RefreshState()
+        {
+            bool inst = Setup.IsInstalled;
+            if (uninstallMode)
             {
-                Text = AppName + " – Setup";
-                FormBorderStyle = FormBorderStyle.FixedDialog;
-                MaximizeBox = false;
-                StartPosition = FormStartPosition.CenterScreen;
-                ClientSize = new Size(520, 330);
-                BackColor = CBg;
-                ForeColor = CText;
-                Font = new Font("Segoe UI", 9.5f);
-                try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+                btnMain.Text = confirmRemove ? "Wirklich entfernen" : "Deinstallieren";
+                btnMain.Enabled = inst && !busy && !done;
+                btnRemove.Visible = false;
+            }
+            else
+            {
+                btnMain.Text = done && !chkLaunch.Checked ? "Starten" : inst ? "Neu installieren" : "Installieren";
+                btnRemove.Visible = inst && !busy;
+                btnRemove.Text = confirmRemove ? "Wirklich entfernen?" : "Deinstallieren";
+                btnMain.Enabled = !busy;
+            }
+            if (!busy && !done && status.Length == 0)
+            {
+                if (uninstallMode && !inst) SetStatus(AppInfo.Name + " ist nicht installiert.", "", Theme.Muted);
+                else if (inst) SetStatus(AppInfo.Name + " ist installiert.", Setup.Folder, Theme.Green);
+                else SetStatus("Bereit zur Installation.", "Für dich allein, ohne Admin-Rechte: " + Setup.Folder, Theme.Muted);
+            }
+            foreach (var b in new[] { btnMain, btnRemove, btnClose }) b.Invalidate();
+            Invalidate();
+        }
 
-                var title = new Label { Text = AppName, Font = new Font("Segoe UI Semibold", 18f), AutoSize = true, Location = new Point(28, 22) };
-                var sub = new Label
+        void SetStatus(string text, string sub, Color c)
+        {
+            status = text; detail = sub; statusColor = c;
+            Invalidate(new Rectangle(0, statusTop, W, 60));
+        }
+
+        void OnMain()
+        {
+            if (uninstallMode) { OnRemove(); return; }
+            if (done && !chkLaunch.Checked) { Launch(); Close(); return; }
+            Run("Wird installiert …", () => Setup.Install(chkDesktop.Checked, chkStart.Checked), () =>
+            {
+                if (chkLaunch.Checked) { Launch(); Close(); return; }
+                SetStatus("Installiert.", "Starten über das Startmenü oder direkt hier.", Theme.Green);
+            });
+        }
+
+        /// <summary>Entfernen mit Rückfrage im Fenster: erster Klick fragt, zweiter Klick (innerhalb von 4 s) entfernt.</summary>
+        void OnRemove()
+        {
+            if (!confirmRemove)
+            {
+                confirmRemove = true;
+                confirmUntil = clock.Elapsed.TotalSeconds + 4;
+                SetStatus("Wirklich entfernen?", "Programm, Verknüpfungen und Eintrag in den Windows-Apps werden gelöscht. Zum Bestätigen nochmal klicken.", Theme.Orange);
+                RefreshState();
+                return;
+            }
+            confirmRemove = false;
+            Run("Wird entfernt …", Setup.Uninstall, () => SetStatus(AppInfo.Name + " wurde vollständig entfernt.", "", Theme.Green));
+        }
+
+        void Launch()
+        {
+            try { Process.Start(new ProcessStartInfo(Setup.AppPath) { WorkingDirectory = Setup.Folder }); } catch { }
+        }
+
+        /// <summary>Arbeit im Hintergrund, dazu ein Fortschritt, der mindestens eine knappe Sekunde läuft (sonst wirkt es abgehackt).</summary>
+        void Run(string text, Action work, Action finished)
+        {
+            busy = true; done = false;
+            progress = 0; progressTarget = 0.85f;
+            SetStatus(text, "", Theme.Accent);
+            RefreshState();
+            Exception error = null;
+            var started = clock.Elapsed.TotalSeconds;
+            var th = new Thread(() => { try { work(); } catch (Exception ex) { error = ex; } }) { IsBackground = true };
+            th.SetApartmentState(ApartmentState.STA);   // Verknüpfungen über WScript.Shell brauchen STA
+            th.Start();
+            var wait = new System.Windows.Forms.Timer { Interval = 30 };
+            wait.Tick += delegate
+            {
+                if (th.IsAlive || clock.Elapsed.TotalSeconds - started < 0.9) return;
+                wait.Stop(); wait.Dispose();
+                busy = false;
+                if (error != null)
                 {
-                    Text = "Strömungssimulation im virtuellen Windkanal · Version " + Version,
-                    ForeColor = CMuted, AutoSize = true, Location = new Point(30, 62)
-                };
-                var path = new Label
+                    progress = -1;
+                    SetStatus("Das hat nicht geklappt.", error.Message, Theme.Orange);
+                }
+                else
                 {
-                    Text = "Installationsordner (nur für dich, keine Admin-Rechte nötig):\n" + InstallDir,
-                    ForeColor = CMuted, Location = new Point(30, 100), Size = new Size(470, 40)
-                };
-                chkStart = MakeCheck("Verknüpfung im Startmenü", 152);
-                chkDesktop = MakeCheck("Verknüpfung auf dem Desktop", 180);
-                chkLaunch = MakeCheck("Nach der Installation starten", 208);
+                    progressTarget = 1;
+                    done = true;
+                    finished();
+                }
+                RefreshState();
+            };
+            wait.Start();
+        }
 
-                lblState = new Label { ForeColor = CAccent, Location = new Point(30, 244), Size = new Size(470, 20) };
-
-                btnInstall = MakeButton("Installieren", new Point(30, 276), 160);
-                btnInstall.BackColor = Color.FromArgb(38, 98, 170);
-                btnInstall.FlatAppearance.BorderColor = CAccent;
-                btnUninstall = MakeButton("Deinstallieren", new Point(200, 276), 150);
-                var btnClose = MakeButton("Schließen", new Point(360, 276), 130);
-
-                btnInstall.Click += delegate { DoInstall(); };
-                btnUninstall.Click += delegate { DoUninstall(); };
-                btnClose.Click += delegate { Close(); };
-
-                Controls.AddRange(new Control[] { title, sub, path, chkStart, chkDesktop, chkLaunch, lblState, btnInstall, btnUninstall, btnClose });
+        void OnTick()
+        {
+            if (confirmRemove && clock.Elapsed.TotalSeconds > confirmUntil)
+            {
+                confirmRemove = false;
+                status = "";
                 RefreshState();
             }
+            if (progress >= 0) progress += (progressTarget - progress) * 0.12f;
+            Invalidate(new Rectangle(Pad, Pad, W - 2 * Pad, StageH));
+            if (progress >= 0) Invalidate(new Rectangle(0, statusTop, W, 60));
+        }
 
-            CheckBox MakeCheck(string text, int y)
-            {
-                return new CheckBox { Text = text, Checked = true, Location = new Point(30, y), AutoSize = true, ForeColor = CText };
-            }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Theme.Prepare(g);
+            g.Clear(Theme.Card);
+            var sr = new RectangleF(Pad, Pad, W - 2 * Pad, StageH);
+            stage.Draw(g, sr, (float)clock.Elapsed.TotalSeconds, 12, Theme.Dark ? Color.FromArgb(205, 209, 216) : Color.FromArgb(70, 76, 86));
 
-            Button MakeButton(string text, Point loc, int w)
-            {
-                var b = new Button
-                {
-                    Text = text, Location = loc, Size = new Size(w, 34), FlatStyle = FlatStyle.Flat,
-                    BackColor = CCtl, ForeColor = CText, Cursor = Cursors.Hand
-                };
-                b.FlatAppearance.BorderColor = CBorder;
-                return b;
-            }
+            int ty = Pad + StageH + 22;
+            Theme.DrawLogo(g, Pad + 2, ty, 42, Theme.Ink, Theme.OnInk);
+            Theme.Draw(g, "windkanal", Theme.Word, Theme.Text, new Rectangle(Pad + 56, ty - 2, 260, 28), TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, uninstallMode ? "Vom Computer entfernen" : "Strömungssimulation in 2D und 3D", Theme.Small, Theme.Muted,
+                       new Rectangle(Pad + 57, ty + 24, 300, 18), TextFormatFlags.VerticalCenter);
+            string ver = "Version " + AppInfo.Version;
+            int vw = Theme.ChipWidth(ver);
+            Theme.Chip(g, ver, W - Pad - vw, ty + 9, Theme.Muted, Theme.Ctl);
 
-            void RefreshState()
-            {
-                bool inst = IsInstalled;
-                btnUninstall.Enabled = inst;
-                btnInstall.Text = inst ? "Neu installieren" : "Installieren";
-                lblState.Text = inst ? "✓ " + AppName + " ist bereits installiert." : "";
-            }
+            // Trennlinie über den Optionen
+            using (var p = new Pen(Theme.Border)) g.DrawLine(p, Pad, optionsTop - 12, W - Pad, optionsTop - 12);
 
-            void DoInstall()
-            {
-                try
-                {
-                    UseWaitCursor = true;
-                    Install(chkDesktop.Checked, chkStart.Checked);
-                    UseWaitCursor = false;
-                    if (chkLaunch.Checked)
-                    {
-                        Process.Start(new ProcessStartInfo(Path.Combine(InstallDir, AppExe)) { WorkingDirectory = InstallDir });
-                        Close();
-                        return;
-                    }
-                    RefreshState();
-                    MessageBox.Show(this, AppName + " wurde erfolgreich installiert.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    UseWaitCursor = false;
-                    MessageBox.Show(this, "Installation fehlgeschlagen:\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-
-            void DoUninstall()
-            {
-                if (MessageBox.Show(this, AppName + " wirklich vom Computer entfernen?", Text,
-                                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-                try
-                {
-                    Uninstall();
-                    RefreshState();
-                    MessageBox.Show(this, AppName + " wurde vollständig entfernt.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this, "Deinstallation fehlgeschlagen:\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
+            // Zustand: Text, darunter Details oder Fortschritt
+            Theme.Draw(g, status, Theme.Label, statusColor, new Rectangle(Pad + 4, statusTop, W - 2 * Pad, 22), TextFormatFlags.VerticalCenter);
+            if (progress >= 0)
+                Theme.Capsules(g, new RectangleF(Pad + 4, statusTop + 30, W - 2 * Pad - 8, 10), 44, Math.Min(1, progress), Theme.Accent, Theme.Track);
+            else if (detail.Length > 0)
+                Theme.Draw(g, detail, Theme.Small, Theme.Muted, new Rectangle(Pad + 4, statusTop + 24, W - 2 * Pad - 8, 34),
+                           TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
         }
     }
 }

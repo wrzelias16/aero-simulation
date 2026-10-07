@@ -106,9 +106,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Vorschau3D-Build fehlgeschlagen' }
 
 # --- Installer (App als eingebettete Ressource) ---
 $setup = Join-Path $bin 'Setup.exe'
-& $csc /nologo /target:winexe /optimize+ /win32icon:$ico `
+# Der Installer nutzt Design, Schrift und Strömungsbühne des Programms (Theme, Bedienelemente, FlowStage)
+& $csc /nologo /target:winexe /unsafe /optimize+ /platform:x64 /win32icon:$ico `
     /r:System.Windows.Forms.dll /r:System.Drawing.dll "/resource:$app,Payload.Windkanal2D.exe" /out:$setup `
-    (Join-Path $root 'Setup\Setup.cs')
+    "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
+    "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
+    (Join-Path $root 'Setup\Setup.cs') (Join-Path $root 'App\AppInfo.cs') (Join-Path $root 'App\Ui.cs') `
+    (Join-Path $root 'App\FlowStage.cs') (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'App\Solver.cs') `
+    (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') (Join-Path $root 'App\Models.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Setup-Build fehlgeschlagen' }
 
 Copy-Item $setup (Join-Path $dist 'Windkanal2D-Setup.exe') -Force

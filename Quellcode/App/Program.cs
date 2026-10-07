@@ -10,12 +10,6 @@ using System.Windows.Forms;
 
 namespace Windkanal
 {
-    /// <summary>Versionsnummer an einer Stelle (Schema siehe CLAUDE.md: v0.0.x bis zur stabilen 3D-Version v1.0.0).</summary>
-    static class AppInfo
-    {
-        public const string Version = "0.0.2";
-    }
-
     static class Program
     {
         [STAThread]
