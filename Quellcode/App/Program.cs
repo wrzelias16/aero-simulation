@@ -64,12 +64,16 @@ namespace Windkanal
 
         static void Swap(Form from, Form to)
         {
-            to.StartPosition = FormStartPosition.Manual;
-            if (from.WindowState == FormWindowState.Normal) to.Bounds = from.Bounds;
-            to.WindowState = from.WindowState == FormWindowState.Minimized ? FormWindowState.Normal : from.WindowState;
-            to.Show();
-            to.Activate();
-            from.Hide();
+            // weich überblenden: das alte Fensterbild blendet aus, darunter steht schon das neue Fenster
+            Transition.CrossFade(from, () =>
+            {
+                to.StartPosition = FormStartPosition.Manual;
+                if (from.WindowState == FormWindowState.Normal) to.Bounds = from.Bounds;
+                to.WindowState = from.WindowState == FormWindowState.Minimized ? FormWindowState.Normal : from.WindowState;
+                to.Show();
+                to.Activate();
+                from.Hide();
+            }, to);
         }
     }
 }

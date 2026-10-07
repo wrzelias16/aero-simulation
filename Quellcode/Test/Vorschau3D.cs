@@ -225,9 +225,24 @@ static class Vorschau3D
                     }
                     t2.Interval = 800;
                     break;
+                case 6:
+                    Save(f2, Path.Combine(dir, "fenster_2d_klein_gescrollt.png"));
+                    // hell/dunkel mit Überblenden umschalten (darf nicht abstürzen), danach zurück
+                    try
+                    {
+                        Call(f2, "SwitchTheme");
+                        Console.WriteLine("[OK]     Design umgeschaltet mit Überblenden");
+                    }
+                    catch (Exception ex) { Console.WriteLine("[FEHLER] Design umschalten: " + ex.Message); recFails++; }
+                    t2.Interval = 600;
+                    break;
+                case 7:
+                    Save(f2, Path.Combine(dir, "fenster_2d_hell.png"));
+                    Call(f2, "SwitchTheme");
+                    t2.Interval = 600;
+                    break;
                 default:
                     t2.Stop();
-                    Save(f2, Path.Combine(dir, "fenster_2d_klein_gescrollt.png"));
                     f2.Close();
                     break;
             }

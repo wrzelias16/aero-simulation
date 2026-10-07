@@ -426,9 +426,13 @@ namespace Windkanal
         /// <summary>Zwischen hellem und dunklem Design umschalten und die Wahl merken.</summary>
         void SwitchTheme()
         {
-            Theme.Apply(!Theme.Dark);
-            Theme.SaveDark(Theme.Dark);
-            RefreshTheme();
+            // hell ↔ dunkel weich überblenden
+            Transition.CrossFade(this, () =>
+            {
+                Theme.Apply(!Theme.Dark);
+                Theme.SaveDark(Theme.Dark);
+                RefreshTheme();
+            });
         }
 
         /// <summary>Farben neu anwenden (auch nach einem Wechsel im 3D-Fenster).</summary>
@@ -437,6 +441,7 @@ namespace Windkanal
             BackColor = Theme.Bg;
             ForeColor = Theme.Text;
             Recolor(this);
+            if (setScroll != null && setScroll.IsHandleCreated) { Theme.ThemeScrollbars(setScroll.Handle); setScroll.Invalidate(true); }
             UpdateThemeButton();
             Theme.DarkTitleBar(Handle);
             Theme.RefreshFrame(this);

@@ -374,6 +374,78 @@ namespace Windkanal
     }
 
     /// <summary>
+    /// Weiches Überblenden bei großen Wechseln (2D ↔ 3D, hell ↔ dunkel): Das bisherige Fensterbild liegt kurz als Foto
+    /// über allem und wird ausgeblendet, darunter steht schon der neue Zustand. Ohne Windows-Animationen sofort.
+    /// </summary>
+    static class Transition
+    {
+        /// <param name="window">Fenster, dessen Bild überblendet wird</param>
+        /// <param name="change">der eigentliche Wechsel (Farben anwenden, anderes Fenster zeigen …)</param>
+        /// <param name="shown">Fenster, das danach zu sehen ist (wird vor dem Ausblenden fertig gezeichnet)</param>
+        public static void CrossFade(Form window, Action change, Form shown = null, int ms = 240)
+        {
+            if (!SystemInformation.UIEffectsEnabled || !window.Visible || window.WindowState == FormWindowState.Minimized)
+            {
+                change();
+                return;
+            }
+            Rectangle b = window.Bounds;
+            Bitmap shot;
+            try
+            {
+                shot = new Bitmap(b.Width, b.Height);
+                using (var g = Graphics.FromImage(shot)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
+            }
+            catch { change(); return; }
+            var cover = new Cover(shot) { Bounds = b };
+            cover.Show();
+            cover.Update();
+            change();
+            var target = shown ?? window;
+            target.Update();
+            cover.BringToFront();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var timer = new Timer { Interval = 10 };
+            timer.Tick += delegate
+            {
+                double t = Math.Min(1, clock.Elapsed.TotalMilliseconds / ms);
+                double e = 1 - Math.Pow(1 - t, 3);   // schnell los, weich aus
+                if (t >= 1)
+                {
+                    timer.Stop(); timer.Dispose();
+                    cover.Close(); cover.Dispose(); shot.Dispose();
+                    if (!target.IsDisposed && target.Visible) target.Activate();
+                    return;
+                }
+                cover.Opacity = 1 - e;
+            };
+            timer.Start();
+        }
+
+        sealed class Cover : Form
+        {
+            readonly Bitmap img;
+
+            public Cover(Bitmap image)
+            {
+                img = image;
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                ShowInTaskbar = false;
+                TopMost = true;
+                DoubleBuffered = true;
+                Opacity = 1;
+            }
+
+            protected override bool ShowWithoutActivation { get { return true; } }
+
+            protected override void OnPaintBackground(PaintEventArgs e) { }
+
+            protected override void OnPaint(PaintEventArgs e) { e.Graphics.DrawImageUnscaled(img, 0, 0); }
+        }
+    }
+
+    /// <summary>
     /// Scrollbereich in einer Karte: Titel und Rahmen der Karte bleiben stehen, nur der Inhalt darunter scrollt.
     /// </summary>
     sealed class ScrollPanel : Panel
