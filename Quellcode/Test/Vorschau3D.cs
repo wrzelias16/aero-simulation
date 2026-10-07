@@ -191,9 +191,32 @@ static class Vorschau3D
                         t2.Interval = 5000;
                     }
                     break;
+                case 3:
+                    Save(f2, Path.Combine(dir, "fenster_2d_drs_nachlauf.png"));
+                    // Vergleich: A mit geschlossenem DRS, B mit offenem
+                    {
+                        var bf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                        typeof(Windkanal.MainForm).GetField("motion", bf).SetValue(f2, 0f);
+                        Call(f2, "ApplyMotionMask");
+                        Call(f2, "UpdateMotionButton");
+                        ((Windkanal.Toggle)Field(f2, "chkCompare")).Checked = true;
+                    }
+                    t2.Interval = 9000;
+                    break;
+                case 4:
+                    {
+                        Save(f2, Path.Combine(dir, "fenster_2d_vergleich.png"));
+                        double a = (double)Field(f2, "meanCd"), b = (double)Field(f2, "meanCdB");
+                        bool ok = (bool)Field(f2, "compare") && b > 0 && b < a;
+                        Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "Vergleich DRS zu/offen: cw A " + a.ToString("0.000") + ", cw B " + b.ToString("0.000") + " (offen muss weniger Widerstand haben)");
+                        if (!ok) recFails++;
+                        f2.ClientSize = new Size(1280, 800);
+                        t2.Interval = 1500;
+                    }
+                    break;
                 default:
                     t2.Stop();
-                    Save(f2, Path.Combine(dir, "fenster_2d_drs_nachlauf.png"));
+                    Save(f2, Path.Combine(dir, "fenster_2d_klein.png"));
                     f2.Close();
                     break;
             }

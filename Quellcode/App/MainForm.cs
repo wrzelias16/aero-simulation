@@ -57,6 +57,23 @@ namespace Windkanal
         FlatSlider tbAngle, tbSize, tbRe;
         Toggle chkSmoke, chkWalls;
         FlatButton btnRun, btnReset, btnInfo, btnTheme, btnFile;
+
+        // Vergleich: zweite Strömung B mit denselben Einstellungen (Re, Größe, Winkel, Auflösung),
+        // aber anderem Modell bzw. anderer Klappenstellung. A oben, B unten im Strömungsbild.
+        bool compare;
+        Solver solverB;
+        Particles particlesB;
+        readonly Renderer rendererB = new Renderer();
+        readonly ForceStats statsB = new ForceStats(400000);
+        readonly double[] batchFxB = new double[500], batchFyB = new double[500];
+        Model modelB;
+        float motionB, refLenB, frontalB;
+        double curCdB, curClB, meanCdB, meanClB;
+        bool settledB;
+        Toggle chkCompare, chkMotionB;
+        ModelPicker cbShapeB;
+        const int CompareGap = 10;
+        int settingsBottom;
         FileMenu fileMenu;
         /// <summary>Eine 3D-Sitzung wurde hier geöffnet: im 3D-Fenster laden.</summary>
         public event Action<string> OpenIn3D;
@@ -259,8 +276,35 @@ namespace Windkanal
                 CreateSolver();
                 RebuildGeometry(true);
             };
-            chkWalls = (Toggle)add(new Toggle { Text = "Wände mit Reibung (Haftbedingung)" }, 28, 0);
-            chkWalls.CheckedChanged += delegate { solver.NoSlipWalls = chkWalls.Checked; stats.Clear(); };
+            chkWalls = (Toggle)add(new Toggle { Text = "Wände mit Reibung (Haftbedingung)" }, 28, 14);
+            chkWalls.CheckedChanged += delegate
+            {
+                solver.NoSlipWalls = chkWalls.Checked; stats.Clear();
+                if (solverB != null) { solverB.NoSlipWalls = chkWalls.Checked; statsB.Clear(); }
+            };
+
+            add(new Section("Vergleich"), 20, 10);
+            chkCompare = (Toggle)add(new Toggle { Text = "Zweite Strömung B daneben rechnen" }, 28, 8);
+            chkCompare.CheckedChanged += delegate { SetCompare(chkCompare.Checked); };
+            cbShapeB = (ModelPicker)add(new ModelPicker(ModelLibrary.ByCategory()), 48, 6);
+            cbShapeB.Selected = model;
+            cbShapeB.SelectedChanged += delegate
+            {
+                if (suppress || cbShapeB.Selected.IsCustom) return;
+                modelB = cbShapeB.Selected;
+                motionB = 0;
+                UpdateCompareControls();
+                if (compare) RebuildGeometryB(true);
+            };
+            chkMotionB = (Toggle)add(new Toggle { Text = "B mit offener Klappe (DRS offen)" }, 28, 0);
+            chkMotionB.CheckedChanged += delegate
+            {
+                if (suppress) return;
+                motionB = chkMotionB.Checked ? 1 : 0;
+                if (compare) RebuildGeometryB(false);
+            };
+            settingsBottom = y;
+            UpdateCompareControls();
 
             // --- Umrechnung auf Luft
             cardAir = new Card("Echte Größe und Tempo");
@@ -290,6 +334,11 @@ namespace Windkanal
 
             Controls.AddRange(new Control[] { cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir });
             fileMenu = new FileMenu(this, cardView, SaveSession, LoadSession, ShowMessage);
+            // Einstellungen: bei niedrigen Fenstern mit Bildlaufleiste statt abgeschnitten
+            cardSet.AutoScroll = true;
+            cardSet.AutoScrollMargin = new Size(0, Card.Pad);
+            cardSet.Scroll += delegate { cardSet.Invalidate(); };
+            cardSet.HandleCreated += delegate { Theme.ThemeScrollbars(cardSet.Handle); };
             ResumeLayout();
             LayoutAll();
             UpdateModelHint();
@@ -525,6 +574,7 @@ namespace Windkanal
             solver = new Solver(ResNX[resIndex], ResNY[resIndex]);
             solver.NoSlipWalls = chkWalls != null && chkWalls.Checked;
             particles = new Particles(solver.NX, solver.NY);
+            if (compare) CreateSolverB();
 
             // eigene Zeichnung auf das neue Gitter übertragen
             if (model.IsCustom && oldMask != null)
@@ -578,6 +628,109 @@ namespace Windkanal
             }
             stats.Clear();
             dirty = true;
+            if (compare) RebuildGeometryB(resetFlow);
+        }
+
+        // ------------------------------------------------------------ Vergleich
+
+        void UpdateCompareControls()
+        {
+            if (cbShapeB == null) return;
+            cbShapeB.Enabled = compare;
+            var mb = modelB ?? model;
+            bool has = mb != null && mb.HasMotion && !mb.IsCustom;
+            chkMotionB.Enabled = compare && has;
+            chkMotionB.Text = has ? "B mit " + (mb.MotionName == "DRS" ? "offenem DRS" : mb.MotionName + " an") : "B mit offener Klappe (Modell hat keine)";
+            suppress = true;
+            chkMotionB.Checked = motionB >= 0.5f;
+            suppress = false;
+            chkMotionB.Invalidate();
+        }
+
+        void SetCompare(bool on)
+        {
+            if (on == compare) return;
+            compare = on;
+            if (on)
+            {
+                // Vorgabe: dasselbe Modell; hat es eine Klappe, steht sie bei B offen (z. B. DRS zu gegen offen)
+                if (modelB == null || modelB.IsCustom) modelB = model.IsCustom ? ModelLibrary.All[0] : model;
+                if (modelB == model && model.HasMotion) motionB = 1;
+                suppress = true;
+                cbShapeB.Selected = modelB;
+                suppress = false;
+                CreateSolverB();
+                RebuildGeometryB(true);
+            }
+            else
+            {
+                if (solverB != null) solverB.Dispose();
+                solverB = null; particlesB = null;
+                statsB.Clear();
+            }
+            UpdateCompareControls();
+            dirty = true;
+            foreach (var c in new[] { cardCd, cardCl, cardChart, cardView }) c.Invalidate();
+        }
+
+        void CreateSolverB()
+        {
+            if (solverB != null) solverB.Dispose();
+            solverB = new Solver(ResNX[resIndex], ResNY[resIndex]);
+            solverB.NoSlipWalls = chkWalls != null && chkWalls.Checked;
+            particlesB = new Particles(solverB.NX, solverB.NY);
+        }
+
+        /// <summary>Form B mit denselben Größen- und Winkeleinstellungen wie A rastern.</summary>
+        void RebuildGeometryB(bool resetFlow)
+        {
+            if (!compare || solverB == null || modelB == null) return;
+            int nx = solverB.NX, ny = solverB.NY;
+            float sizeCells = sizePercent / 100f * ny;
+            float px = (modelB.OnGround ? 0.3f : 0.25f) * solverB.VisibleNX;
+            var mask = ModelLibrary.Rasterize(modelB, nx, ny, px, sizeCells, angleDeg, modelB.HasMotion ? motionB : 0);
+            int rows = 0;
+            for (int y = 0; y < ny; y++)
+                for (int x = 2; x < nx - 2; x++)
+                    if (mask[y * nx + x]) { rows++; break; }
+            frontalB = rows;
+            refLenB = modelB.RefIsSize ? sizeCells : Math.Max(rows, 0);
+            if (refLenB < 2) refLenB = 0.1f * ny;
+            solverB.ApplyMask(mask);
+            UpdateFlowParamsB();
+            if (resetFlow) { solverB.Reset(); particlesB.Clear(); }
+            statsB.Clear();
+            dirty = true;
+        }
+
+        void UpdateFlowParamsB()
+        {
+            if (solverB == null) return;
+            double L = Math.Max(2.0, refLenB);
+            solverB.U0 = Solver.ChooseU0(reynolds, L, frontalB / (double)solverB.NY);
+            solverB.Nu = (float)(solverB.U0 * L / reynolds);
+        }
+
+        void UpdateReadoutsB()
+        {
+            if (!compare || solverB == null) return;
+            double T = refLenB / solverB.U0;
+            int transient = (int)(15 * T);
+            int window = Math.Min((int)(40 * T), statsB.Count - transient);
+            settledB = window > 5 * T;
+            curCdB = statsB.Count > 0 ? statsB.Cd(0) : 0;
+            curClB = statsB.Count > 0 ? statsB.Cl(0) : 0;
+            double freq;
+            meanCdB = meanClB = 0;
+            if (settledB) statsB.Analyze(window, (int)(0.5 * T), out meanCdB, out meanClB, out freq);
+        }
+
+        /// <summary>Unterschied B gegenüber A in Prozent, als Text mit Vorzeichen.</summary>
+        static string Delta(double a, double b)
+        {
+            if (Math.Abs(a) < 1e-6) return "";
+            double d = (b - a) / Math.Abs(a) * 100;
+            return (d >= 0 ? "+" : "−") + F(Math.Abs(d), "0") + " %";
         }
 
         // ------------------------------------------------------------ Sitzung
@@ -608,6 +761,12 @@ namespace Windkanal
             {
                 d["bewegung"] = Session.F(motion >= 0.5f ? 1 : 0);
                 d["bewegung-tempo"] = motionSpeed.ToString();
+            }
+            d["vergleich"] = Session.Yes(compare);
+            if (modelB != null && !modelB.IsCustom)
+            {
+                d["modell-b"] = modelB.Id;
+                d["bewegung-b"] = Session.F(motionB >= 0.5f ? 1 : 0);
             }
             return d;
         }
@@ -645,6 +804,13 @@ namespace Windkanal
                 ApplyMotionMask();
                 UpdateMotionButton();
             }
+            string idB;
+            Model mb = d.TryGetValue("modell-b", out idB) ? ModelLibrary.Find(idB) : null;
+            if (mb != null) { modelB = mb; motionB = Session.D(d, "bewegung-b", 0) >= 0.5 ? 1 : 0; suppress = true; cbShapeB.Selected = mb; suppress = false; }
+            bool cmp = Session.B(d, "vergleich", false);
+            if (cmp && compare) RebuildGeometryB(true);
+            chkCompare.Checked = cmp;
+            UpdateCompareControls();
             ShowMessage("Sitzung geöffnet");
         }
 
@@ -733,6 +899,7 @@ namespace Windkanal
             double L = Math.Max(2.0, refLen);
             solver.U0 = Solver.ChooseU0(reynolds, L, frontalCells / (double)solver.NY);
             solver.Nu = (float)(solver.U0 * L / reynolds);
+            if (compare) { UpdateFlowParamsB(); statsB.Clear(); }
         }
 
         void ResetFlow()
@@ -740,6 +907,7 @@ namespace Windkanal
             solver.Reset();
             particles.Clear();
             stats.Clear();
+            if (compare && solverB != null) { solverB.Reset(); particlesB.Clear(); statsB.Clear(); }
             dirty = true;
         }
 
@@ -767,6 +935,12 @@ namespace Windkanal
                     batch = Math.Min(batch, maxSteps - steps);
                     double t0 = sw.Elapsed.TotalMilliseconds;
                     solver.StepMany(batch, batchFx, batchFy);
+                    if (compare && solverB != null)
+                    {
+                        solverB.StepMany(batch, batchFxB, batchFyB);
+                        float qB = 0.5f * solverB.U0 * solverB.U0 * refLenB;
+                        for (int k = 0; k < batch; k++) statsB.Add((float)(batchFxB[k] / qB), (float)(batchFyB[k] / qB));
+                    }
                     double dt = sw.Elapsed.TotalMilliseconds - t0;
                     msPerStep = 0.7 * msPerStep + 0.3 * dt / batch;
                     for (int k = 0; k < batch; k++) stats.Add((float)(batchFx[k] / q), (float)(batchFy[k] / q));
@@ -786,14 +960,32 @@ namespace Windkanal
                 AdvanceMotion(steps, tickMs);
                 solver.AdvectSmoke(steps);
                 if (showSmoke && viewMode != ViewMode.Rauch) particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
+                if (compare && solverB != null)
+                {
+                    if (!solverB.IsStable())
+                    {
+                        solverB.Reset(); particlesB.Clear(); statsB.Clear();
+                        warning = "Strömung B wurde instabil und neu gestartet.";
+                        warningUntil = now + 9000;
+                    }
+                    solverB.AdvectSmoke(steps);
+                    if (showSmoke && viewMode != ViewMode.Rauch) particlesB.Update(solverB, steps, 2.5f * solverB.NX / solverB.U0);
+                }
                 dirty = true;
             }
 
             if (dirty && view.ClientSize.Width > 0 && view.ClientSize.Height > 0)
             {
-                renderer.EnsureSize(view.ClientSize.Width, view.ClientSize.Height);
+                int vh = compare && solverB != null ? (view.ClientSize.Height - CompareGap) / 2 : view.ClientSize.Height;
+                renderer.EnsureSize(view.ClientSize.Width, vh);
                 if (viewMode == ViewMode.Rauch) solver.ReadSmoke();
                 renderer.Render(solver, particles, viewMode, showSmoke, refLen);
+                if (compare && solverB != null)
+                {
+                    rendererB.EnsureSize(view.ClientSize.Width, vh);
+                    if (viewMode == ViewMode.Rauch) solverB.ReadSmoke();
+                    rendererB.Render(solverB, particlesB, viewMode, showSmoke, refLenB);
+                }
                 view.Invalidate();
                 dirty = false;
                 frames++;
@@ -870,6 +1062,7 @@ namespace Windkanal
             rowsPhys.Set(new[] { "Reynoldszahl echt", "Widerstand FW", "Auftrieb FA" },
                          new[] { reText, Sig(useCd * qd * Lm) + " N/m", Sig(useCl * qd * Lm) + " N/m" });
 
+            UpdateReadoutsB();
             foreach (var c in new[] { cardCd, cardCl, cardKenn, cardChart }) c.Invalidate();
             cardView.Invalidate(new Rectangle(0, 0, cardView.Width, Card.Head));
         }
@@ -984,9 +1177,18 @@ namespace Windkanal
         {
             if (renderer.Bitmap == null || solver == null) return;
             var g = e.Graphics;
-            g.DrawImageUnscaled(renderer.Bitmap, 0, 0);
-            // Tunnelbild mit runden Ecken
-            var tr = new RectangleF(renderer.OffX, renderer.OffY, solver.VisibleNX * renderer.Scale, solver.NY * renderer.Scale);
+            bool two = compare && solverB != null && rendererB.Bitmap != null;
+            DrawTunnel(g, renderer, solver, 0, two ? "A · " + model.Name + (model.HasMotion && motion >= 0.5f ? " (offen)" : "") : null);
+            if (two)
+                DrawTunnel(g, rendererB, solverB, renderer.Bitmap.Height + CompareGap,
+                           "B · " + modelB.Name + (modelB.HasMotion && motionB >= 0.5f ? " (offen)" : ""));
+        }
+
+        /// <summary>Tunnelbild mit runden Ecken, bei Vergleich mit Beschriftung oben links.</summary>
+        void DrawTunnel(Graphics g, Renderer r, Solver s, int top, string label)
+        {
+            g.DrawImageUnscaled(r.Bitmap, 0, top);
+            var tr = new RectangleF(r.OffX, top + r.OffY, s.VisibleNX * r.Scale, s.NY * r.Scale);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using (var path = new GraphicsPath(FillMode.Alternate))
             using (var b = new SolidBrush(Theme.Card))
@@ -994,6 +1196,11 @@ namespace Windkanal
                 path.AddRectangle(RectangleF.Inflate(tr, 2, 2));
                 path.AddPath(Theme.Round(tr, 14), false);
                 g.FillPath(b, path);
+            }
+            if (label != null)
+            {
+                Theme.Prepare(g);
+                Theme.Chip(g, label, tr.X + 10, tr.Y + 10, Color.White, Color.FromArgb(150, 12, 14, 18));
             }
         }
 
@@ -1017,6 +1224,20 @@ namespace Windkanal
             }
             else
                 Theme.Chip(g, "Mittelwert läuft ein …", Card.Pad, 104, Theme.Orange, Theme.Tint(Theme.Orange));
+
+            // Vergleich: statt des Verlaufs den Wert von B und den Unterschied zu A
+            if (compare && solverB != null)
+            {
+                using (var p = new Pen(Theme.Border)) g.DrawLine(p, Card.Pad, 138, W - Card.Pad, 138);
+                double a = cd ? (settled ? meanCd : curCd) : (settled ? meanCl : curCl);
+                double b = cd ? (settledB ? meanCdB : curCdB) : (settledB ? meanClB : curClB);
+                int bx = Card.Pad + Theme.Chip(g, "B", Card.Pad, 150, col, Theme.Tint(col)) + 8;
+                Theme.Draw(g, statsB.Count > 0 ? F(b, "0.000") : "–", Theme.Mid, Theme.Text, new Rectangle(bx, 144, W - bx - Card.Pad, 34), TextFormatFlags.VerticalCenter);
+                if (statsB.Count > 0 && stats.Count > 0)
+                    Theme.Draw(g, Delta(a, b) + " zu A" + (settled && settledB ? "" : " (läuft ein)"), Theme.Small, Theme.Muted,
+                               new Rectangle(Card.Pad, 178, W - 2 * Card.Pad, 18), TextFormatFlags.VerticalCenter);
+                return;
+            }
 
             // Verlauf der letzten ~12 Zeiteinheiten als Kapseln (eine Kapsel = Mittel über ein Stück)
             var area = new RectangleF(Card.Pad, 142, W - 2 * Card.Pad, BottomH - 142 - 18);
@@ -1086,6 +1307,11 @@ namespace Windkanal
             Theme.Chip(g, "ca  Auftrieb", lx, 18, Theme.Pink, Theme.Tint(Theme.Pink), 24, true);
             int w2 = Theme.ChipWidth("cw  Widerstand", true);
             Theme.Chip(g, "cw  Widerstand", lx - 6 - w2, 18, Theme.Accent, Theme.Tint(Theme.Accent), 24, true);
+            if (compare && solverB != null)
+            {
+                int w3 = Theme.ChipWidth("B blass");
+                Theme.Chip(g, "B blass", lx - 12 - w2 - w3, 18, Theme.Muted, Theme.Ctl);
+            }
 
             var plot = new Rectangle(r.Left + Card.Pad + 40, r.Top + Card.Head + 4, r.Width - 2 * Card.Pad - 40, r.Height - Card.Head - 4 - 34);
             if (plot.Width < 20 || plot.Height < 20 || solver == null) return;
@@ -1104,6 +1330,13 @@ namespace Windkanal
                 double a = stats.Cd(k), b = stats.Cl(k);
                 lo = Math.Min(lo, Math.Min(a, b)); hi = Math.Max(hi, Math.Max(a, b));
             }
+            bool withB = compare && solverB != null && statsB.Count > 2;
+            int spanB = withB ? Math.Min(statsB.Count, span) : 0;
+            for (int k = 0; k < spanB - Math.Min(spanB - 1, skip); k += stride)
+            {
+                double a = statsB.Cd(k), b = statsB.Cl(k);
+                lo = Math.Min(lo, Math.Min(a, b)); hi = Math.Max(hi, Math.Max(a, b));
+            }
             lo = Math.Min(lo, 0); hi = Math.Max(hi, 0);
             double pad = Math.Max(0.1, (hi - lo) * 0.1);
             lo -= pad; hi += pad;
@@ -1120,8 +1353,13 @@ namespace Windkanal
             float y0 = (float)(plot.Bottom - (0 - lo) / (hi - lo) * plot.Height);
             using (var zero = new Pen(Theme.Faint)) g.DrawLine(zero, plot.Left, y0, plot.Right, y0);
 
-            DrawSeries(g, plot, span, lo, hi, true);
-            DrawSeries(g, plot, span, lo, hi, false);
+            if (withB)
+            {
+                DrawSeries(g, plot, spanB, lo, hi, true, statsB, true);
+                DrawSeries(g, plot, spanB, lo, hi, false, statsB, true);
+            }
+            DrawSeries(g, plot, span, lo, hi, true, stats, false);
+            DrawSeries(g, plot, span, lo, hi, false, stats, false);
 
             double spanT = span / T;
             Theme.Chip(g, "letzte " + F(spanT, "0") + " Zeiteinheiten", plot.Left, plot.Bottom + 8, Theme.Muted, Theme.Ctl, 22);
@@ -1129,7 +1367,7 @@ namespace Windkanal
             Theme.Chip(g, "jetzt", plot.Right - jw, plot.Bottom + 8, Theme.Text, Theme.Ctl, 22);
         }
 
-        void DrawSeries(Graphics g, Rectangle plot, int span, double lo, double hi, bool cd)
+        void DrawSeries(Graphics g, Rectangle plot, int span, double lo, double hi, bool cd, ForceStats st, bool faded)
         {
             int n = Math.Min(plot.Width, span);
             if (n < 2) return;
@@ -1137,16 +1375,19 @@ namespace Windkanal
             for (int i = 0; i < n; i++)
             {
                 int back = (int)((long)(n - 1 - i) * (span - 1) / (n - 1));
-                double v = cd ? stats.Cd(back) : stats.Cl(back);
+                double v = cd ? st.Cd(back) : st.Cl(back);
                 v = Math.Max(lo, Math.Min(hi, v));
                 float x = plot.Right - (float)back / (span - 1) * plot.Width;
                 pts[i] = new PointF(x, (float)(plot.Bottom - (v - lo) / (hi - lo) * plot.Height));
             }
-            using (var p = new Pen(cd ? Theme.Accent : Theme.Pink, 2f) { LineJoin = LineJoin.Round })
+            Color c = cd ? Theme.Accent : Theme.Pink;
+            if (faded) c = Theme.Mix(Theme.Card, c, 0.45f);   // B: blasser und dünner
+            using (var p = new Pen(c, faded ? 1.5f : 2f) { LineJoin = LineJoin.Round })
             {
                 if (!cd) p.DashPattern = new[] { 3f, 2f };
                 g.DrawLines(p, pts);
             }
+            if (faded) return;
             var last = pts[n - 1];
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, last.X - 5, last.Y - 5, 10, 10);
             using (var p = new Pen(cd ? Theme.Accent : Theme.Pink, 2f)) g.DrawEllipse(p, last.X - 4, last.Y - 4, 8, 8);
