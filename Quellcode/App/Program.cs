@@ -5,8 +5,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Windkanal")]
 [assembly: AssemblyProduct("Windkanal")]
 [assembly: AssemblyDescription("2D- und 3D-Windkanal-Simulation (Lattice-Boltzmann)")]
-[assembly: AssemblyVersion("0.0.2.0")]
-[assembly: AssemblyFileVersion("0.0.2.0")]
+[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
 
 namespace Windkanal
 {

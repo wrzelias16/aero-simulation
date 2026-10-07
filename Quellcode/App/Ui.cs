@@ -174,6 +174,35 @@ namespace Windkanal
         public static int ChipWidth(string text, bool dot = false) { return Width(text, SmallMed) + 20 + (dot ? 14 : 0); }
 
         /// <summary>Reihe aus Kapseln; <paramref name="filled"/> Anteil (0..1) in Farbe <paramref name="on"/>.</summary>
+        /// <summary>
+        /// Ladebalken: runde Spur, darin der gefüllte Teil; ein weicher heller Schimmer läuft durch den gefüllten Teil
+        /// (t = Zeit in Sekunden, zeigt, dass noch gearbeitet wird).
+        /// </summary>
+        public static void ProgressBar(Graphics g, RectangleF r, float value, Color fill, Color track, float t)
+        {
+            value = Math.Max(0, Math.Min(1, value));
+            float rad = r.Height / 2;
+            FillRound(g, track, r, rad);
+            if (value <= 0) return;
+            var f = new RectangleF(r.X, r.Y, Math.Max(r.Height, r.Width * value), r.Height);
+            FillRound(g, fill, f, rad);
+            if (value >= 1) return;
+            var state = g.Save();
+            using (var clip = Round(f, rad))
+            {
+                g.SetClip(clip);
+                float w = Math.Min(140, f.Width * 0.6f), x = f.X - w + (t * 260 % (f.Width + w));
+                using (var b = new LinearGradientBrush(new RectangleF(x, f.Y, w, f.Height), Color.FromArgb(0, Color.White), Color.FromArgb(90, Color.White), 0f))
+                {
+                    var blend = new ColorBlend { Colors = new[] { Color.FromArgb(0, Color.White), Color.FromArgb(90, Color.White), Color.FromArgb(0, Color.White) },
+                                                 Positions = new[] { 0f, 0.5f, 1f } };
+                    b.InterpolationColors = blend;
+                    g.FillRectangle(b, x, f.Y, w, f.Height);
+                }
+            }
+            g.Restore(state);
+        }
+
         public static void Capsules(Graphics g, RectangleF r, int n, float filled, Color on, Color off)
         {
             float gap = 4, w = (r.Width - gap * (n - 1)) / n;

@@ -4,11 +4,12 @@ Virtueller Windkanal für Windows in C# (.NET Framework 4.8), Windows-.exe.
 Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steht in `README.md`.
 
 ## Stand
-- **v0.0.1** = fertige 2D-Version ("Windkanal 2D"), alles in `main`.
+- **v1.0.0** (Release auf GitHub, von Elias so gewünscht): erste stabile Version mit 2D **und** 3D, alles unten beschrieben.
+- **v0.0.1** = frühere reine 2D-Version ("Windkanal 2D").
 - GPU-Löser (OpenCL, CPU-Fallback), neues UI (Schrift Outfit, Hell/Dunkel, Startfenster), Rauchmodus,
   79 Modelle als Textdateien (`Quellcode/Modelle/LIESMICH.md`, keine echten CAD-Daten), Anzeige "Feinstes Detail".
 - Rendering und Rauch-Partikel laufen noch auf der CPU (nächster Perf-Schritt: Bild auf GPU zeichnen, zurückgestellt).
-- **Nächstes Ziel: 3D-Version.** Elias will, dass 2D "genau da bleibt, wo es ist".
+- 3D ist seit v1.0.0 drin. Elias will, dass 2D "genau da bleibt, wo es ist" (2D-Löser und ValidationTest unverändert).
 
 ## 3D-Version (Ordner `Quellcode/App3D`, Namensraum `Windkanal3D`)
 - 2D und 3D sind **getrennt**: 3D nutzt Design/Bedienelemente aus `App` (Theme, Card, FlatButton …) nur lesend und
@@ -86,7 +87,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## Versionsnummern (Git-Tags)
 - v0.0.1 = jetziger 2D-Stand (gesetzt). Danach v0.0.2 bis v0.0.9; v0.0.9 ist die letzte Version vor der stabilen 3D-Version
   (auch v0.0.10 und höher sind erlaubt, falls mehr Zwischenstände nötig sind).
-- **v1.0.0** = erste saubere, stabile 3D-Version.
+- **v1.0.0** = erste saubere, stabile 3D-Version (gesetzt; Elias hat direkt von v0.0.1 auf v1.0.0 gesprungen).
+  Weitere Versionen nach diesem Muster: kleine Verbesserungen v1.0.x, neue Funktionen v1.x.0.
 - Vor jedem neuen Tag und vor jedem Push Elias kurz fragen.
 
 ## Arbeitsablauf (Git)

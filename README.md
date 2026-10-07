@@ -1,9 +1,19 @@
-# Windkanal 2D
+# Windkanal
 
-Virtueller 2D-Windkanal für Windows: Strömung um Zylinder, Tragflächen, ein Auto-Profil oder eigene
-Formen, mit Rauchlinien, Druck- und Wirbelansicht sowie Messwerten für Widerstand und Auftrieb.
+Virtueller Windkanal für Windows in **2D und 3D**: Strömung um Zylinder, Tragflächen, Formel-1-Teile, Autos oder eigene
+Formen (2D gezeichnet, 3D als STL/OBJ geladen), mit Rauch, Stromlinien, Druck- und Wirbelansicht sowie Messwerten
+für Widerstand und Auftrieb.
 
-**Stand:** Version 1 ist fertig und läuft. Die Strömungsrechnung läuft jetzt auf der **Grafikkarte (OpenCL)**, wenn eine da ist,
+**Version 1.0.0** (erste stabile 2D- und 3D-Version):
+- **3D:** D3Q19-Löser auf der Grafikkarte (FP16-Speicher, Turbulenzmodell LES bis Re 1 Mio.), STL/OBJ-Import mit
+  automatischer Ausrichtung, Stromlinien, echter Rauch, Schnittebene, Oberflächendruck, Kräfte in N und kg.
+- **2D:** animiertes DRS, Macarena-Flügel, aktive Aero 2026, Landeklappe (eigene Kategorie, Echtzeit-Modus),
+  Vergleichsmodus A/B, Gitter bis 2400 × 960.
+- **Beide:** Sitzungen speichern, Bild/Video (MP4)/GIF aufnehmen, echte Länge und Tempo in km/h, aufgeräumtes Design
+  (Ansicht groß, Einstellungen rechts, Ergebnistabelle unten), Installer im Programm-Design.
+- Technische Einzelheiten zu 3D und den neuen Funktionen stehen in `CLAUDE.md`; die Abschnitte unten beschreiben den 2D-Löser.
+
+**Stand 2D (Abschnitte unten):** Version 1 der 2D-Rechnung ist fertig und läuft. Die Strömungsrechnung läuft jetzt auf der **Grafikkarte (OpenCL)**, wenn eine da ist,
 sonst wie bisher auf allen CPU-Kernen. Bedienung und Ergebnisse sind gleich geblieben (siehe Abschnitt 4).
 Der Rest von Version 2 (echter Rauch, genauere Randbedingung) ist unten Schritt für Schritt beschrieben.
 

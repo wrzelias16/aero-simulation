@@ -10,8 +10,8 @@ using Windkanal;
 
 [assembly: AssemblyTitle("Windkanal – Setup")]
 [assembly: AssemblyProduct("Windkanal")]
-[assembly: AssemblyVersion("0.0.2.0")]
-[assembly: AssemblyFileVersion("0.0.2.0")]
+[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
 
 namespace WindkanalSetup
 {
@@ -397,7 +397,8 @@ namespace WindkanalSetup
             // Zustand: Text, darunter Details oder Fortschritt
             Theme.Draw(g, status, Theme.Label, statusColor, new Rectangle(Pad + 4, statusTop, W - 2 * Pad, 22), TextFormatFlags.VerticalCenter);
             if (progress >= 0)
-                Theme.Capsules(g, new RectangleF(Pad + 4, statusTop + 30, W - 2 * Pad - 8, 10), 44, Math.Min(1, progress), Theme.Accent, Theme.Track);
+                Theme.ProgressBar(g, new RectangleF(Pad + 4, statusTop + 32, W - 2 * Pad - 8, 8), Math.Min(1, progress), Theme.Accent, Theme.Track,
+                                  (float)clock.Elapsed.TotalSeconds);
             else if (detail.Length > 0)
                 Theme.Draw(g, detail, Theme.Small, Theme.Muted, new Rectangle(Pad + 4, statusTop + 24, W - 2 * Pad - 8, 34),
                            TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);

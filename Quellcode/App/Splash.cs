@@ -141,7 +141,7 @@ namespace Windkanal
             Theme.Draw(g, ver, fSmallMed, Theme.Muted, new Rectangle(W - Pad - vw, ty + 9, vw, 24), TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
 
             // Fortschritt als Kapseln
-            Theme.Capsules(g, new RectangleF(Pad + 2, H - 52, W - 2 * Pad - 4, 12), 48, Math.Min(1, shown), Theme.Accent, Theme.Track);
+            Theme.ProgressBar(g, new RectangleF(Pad + 2, H - 50, W - 2 * Pad - 4, 8), Math.Min(1, shown), Theme.Accent, Theme.Track, t);
             Theme.Draw(g, status, fSmall, Theme.Muted, new Rectangle(Pad + 2, H - 34, W - 140, 20), TextFormatFlags.VerticalCenter);
             Theme.Draw(g, (int)Math.Round(Math.Min(1, shown) * 100) + " %", fSmallMed, Theme.Text, new Rectangle(W - Pad - 102, H - 34, 100, 20),
                        TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
