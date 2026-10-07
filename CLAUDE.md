@@ -47,6 +47,9 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   Dauer in Rechenschritten = gleich viele Überströmungen der Bezugslänge wie am echten Auto.
 - Modelle: Heckflügel mit DRS (2025: < 400 ms, 85 mm, Art. 3.10.10), Heckflügel 2026 „Macarena“ (Ferrari SF-26,
   Flap dreht 180°; Drehpunkt Sehnenmitte = Annahme), F1-Wagen mit animiertem DRS. Knopf im Strömungsbild, Taste D.
+- Tempo-Auswahl neben dem Knopf: Echtzeit-Faktoren 0,25x … 4x (Bewegung nach der Uhr, DRS bei 1x in 0,40 s, gemessen
+  0,403 s in Vorschau3D) oder „Physikalisch“ (nach Rechenschritten = Zeitlupe). Während der Bewegung keine
+  500-Schritte-Grenze und kurze Bilder (12 ms Rechenzeit). Die Anzeige nennt, wie viel % Echtzeit die Luft dabei schafft.
 - Modelle werden mit `Quellcode/Modelle/Werkzeug/modelle_erzeugen.py` erzeugt. Achtung: das Skript schreibt alle
   Dateien mit LF neu; danach unveränderte Dateien mit `git ls-files -m Quellcode/Modelle | xargs git checkout --` zurücksetzen.
 

@@ -148,15 +148,24 @@ static class Vorschau3D
                         if (b.Text.StartsWith("DRS"))
                             typeof(Control).GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
                                            .Invoke(b, new object[] { EventArgs.Empty });
-                    t2.Interval = 1200;
+                    t2.Interval = 1500;
                     break;
                 case 2:
-                    Save(f2, Path.Combine(dir, "fenster_2d_drs_halb.png"));
-                    t2.Interval = 7000;
+                    {
+                        // Echtzeit 1x: das DRS muss in etwa 0,4 s offen sein (Uhr-Auflösung ein Bild, ~30 ms)
+                        var bf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                        double secs = (double)typeof(Windkanal.MainForm).GetField("lastMotionSeconds", bf).GetValue(f2);
+                        float mot = (float)typeof(Windkanal.MainForm).GetField("motion", bf).GetValue(f2);
+                        bool ok = mot >= 1 && secs >= 0.39 && secs <= 0.47;
+                        Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "DRS in Echtzeit: offen nach " + secs.ToString("0.000") + " s (Soll 0,400 s), Stand " + (mot * 100).ToString("0") + " %");
+                        if (!ok) fails++;
+                        Save(f2, Path.Combine(dir, "fenster_2d_drs_offen.png"));
+                        t2.Interval = 5000;
+                    }
                     break;
                 default:
                     t2.Stop();
-                    Save(f2, Path.Combine(dir, "fenster_2d_drs_offen.png"));
+                    Save(f2, Path.Combine(dir, "fenster_2d_drs_nachlauf.png"));
                     f2.Close();
                     break;
             }

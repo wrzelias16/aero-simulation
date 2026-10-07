@@ -43,6 +43,12 @@ namespace Windkanal
         float motion;
         int motionDir;
         Model motionModel;
+        // Tempo der Bewegung: Echtzeit-Faktoren (1 = echte Dauer, z. B. 0,4 s) oder 0 = physikalisch (nach Rechenschritten)
+        static readonly double[] MotionSpeeds = { 0.25, 0.5, 1, 2, 4, 0 };
+        static readonly string[] MotionSpeedNames = { "Zeitlupe 0,25×", "Zeitlupe 0,5×", "Echtzeit 1×", "Schneller 2×", "Schneller 4×", "Physikalisch" };
+        DropDown cbMotionSpeed;
+        int motionSpeed = 2;
+        double motionWall, motionAir, lastTickMs = -1, lastMotionSeconds = -1;
         /// <summary>Wird ausgelöst, wenn im Kopf "3D" gewählt wird.</summary>
         public event EventHandler SwitchTo3D;
         DropDown cbRes;
@@ -168,6 +174,13 @@ namespace Windkanal
             chkSmoke.CheckedChanged += delegate { showSmoke = chkSmoke.Checked; particles.Clear(); dirty = true; };
             cardView.Controls.Add(view);
             cardView.Controls.Add(chkSmoke);
+            cbMotionSpeed = new DropDown { BackColor = Theme.Card, Visible = false };
+            foreach (var n in MotionSpeedNames) cbMotionSpeed.Items.Add(n);
+            cbMotionSpeed.SelectedIndex = motionSpeed;
+            cbMotionSpeed.SelectedIndexChanged += delegate { motionSpeed = cbMotionSpeed.SelectedIndex; cardView.Invalidate(); };
+            tips.SetToolTip(cbMotionSpeed, "Echtzeit: die Bewegung dauert so lange wie am echten Auto (DRS 0,4 s), die Strömung rechnet dabei so schnell "
+                                           + "die Grafikkarte kann. Physikalisch: Bewegung und Strömung im echten Verhältnis (Zeitlupe).");
+            cardView.Controls.Add(cbMotionSpeed);
             btnMotion = new FlatButton { Primary = true, BackColor = Theme.Card, Visible = false };
             btnMotion.Click += delegate { ToggleMotion(); };
             tips.SetToolTip(btnMotion, "Bewegliches Teil auf- bzw. zufahren (Taste D)");
@@ -299,6 +312,7 @@ namespace Windkanal
             chkSmoke.SetBounds(cardView.Width - Card.Pad - 140, 16, 140, 28);
             int mw2 = Math.Max(150, Theme.Width(btnMotion.Text, btnMotion.Font) + 40);
             btnMotion.SetBounds(chkSmoke.Left - 14 - mw2, 12, mw2, 36);
+            cbMotionSpeed.SetBounds(btnMotion.Left - 10 - 170, 12, 170, 36);
 
             int cw = 196, kw = 236;
             cardCd.SetBounds(Outer, by, cw, BottomH);
@@ -540,6 +554,7 @@ namespace Windkanal
             if (model == null || !model.HasMotion) return;
             // Richtung umkehren; aus der Ruhe heraus: offen -> zu, sonst zu -> offen
             motionDir = motionDir != 0 ? -motionDir : (motion >= 1 ? -1 : 1);
+            motionWall = 0; motionAir = 0; lastMotionSeconds = -1;
             UpdateMotionButton();
         }
 
@@ -548,6 +563,7 @@ namespace Windkanal
             if (btnMotion == null) return;
             bool has = model != null && model.HasMotion && !model.IsCustom;
             btnMotion.Visible = has;
+            cbMotionSpeed.Visible = has;
             if (!has) return;
             string n = model.MotionName;
             bool openNext = motionDir == 0 ? motion < 1 : motionDir < 0;
@@ -560,15 +576,28 @@ namespace Windkanal
         /// Bewegung um 'steps' Rechenschritte weiterführen. Die Dauer entspricht gleich vielen Überströmungen
         /// der Bezugslänge wie am echten Auto (z. B. 0,4 s bei 300 km/h und 0,5 m Flügeltiefe).
         /// </summary>
-        void AdvanceMotion(int steps)
+        void AdvanceMotion(int steps, double wallMs)
         {
             if (motionDir == 0 || model == null || !model.HasMotion) return;
-            double total = model.MotionConvective * refLen / solver.U0;
+            double total = model.MotionConvective * refLen / solver.U0;   // Rechenschritte für die echte Dauer
+            double speed = MotionSpeeds[motionSpeed];
+            double delta = speed > 0
+                ? wallMs / (1000.0 * model.MotionSeconds / speed)          // Echtzeit: nach der Uhr
+                : steps / Math.Max(1.0, total);                            // physikalisch: nach Rechenschritten
+            motionWall += wallMs;
+            motionAir += steps / Math.Max(1.0, total) * model.MotionSeconds;   // so viel echte Zeit ist die Luft weitergekommen
             float before = motion;
-            motion = (float)Math.Max(0, Math.Min(1, motion + motionDir * steps / Math.Max(1.0, total)));
-            if (motion <= 0 || motion >= 1) { motionDir = 0; UpdateMotionButton(); }
+            motion = (float)Math.Max(0, Math.Min(1, motion + motionDir * delta));
+            if (motion <= 0 || motion >= 1)
+            {
+                motionDir = 0;
+                lastMotionSeconds = motionWall / 1000.0;
+                UpdateMotionButton();
+            }
             if (motion != before) ApplyMotionMask();
         }
+
+        bool MotionActive { get { return motionDir != 0 && model != null && model.HasMotion; } }
 
         /// <summary>Nur die Form neu rastern; Strömung, Messreihe und Rechenparameter bleiben (sonst sähe man den Übergang nicht).</summary>
         void ApplyMotionMask()
@@ -583,8 +612,16 @@ namespace Windkanal
         /// <summary>Stand als Zeit im echten Maßstab (Sekunden bei der Modellgeschwindigkeit).</summary>
         string MotionText()
         {
-            double t = motion * model.MotionSeconds;
-            return model.MotionName + " " + F(motion * 100, "0") + " %  ·  " + F(t, "0.00") + " s von " + F(model.MotionSeconds, "0.00") + " s";
+            string s = model.MotionName + " " + F(motion * 100, "0") + " %";
+            double speed = MotionSpeeds[motionSpeed];
+            if (motionDir != 0)
+            {
+                s += "  ·  " + F(motionWall / 1000.0, "0.00") + " s";
+                // wie weit die Luft im Verhältnis zur echten Zeit mitkommt (Echtzeit-Modus: Grafikkarte begrenzt)
+                if (speed > 0 && motionWall > 50) s += "  ·  Luft " + F(100 * motionAir / (motionWall / 1000.0 * speed), "0") + " % Echtzeit";
+            }
+            else if (lastMotionSeconds >= 0) s += "  ·  in " + F(lastMotionSeconds, "0.00") + " s";
+            return s;
         }
 
         void UpdateFlowParams()
@@ -607,24 +644,30 @@ namespace Windkanal
         void OnTick(object sender, EventArgs e)
         {
             double now = clock.Elapsed.TotalMilliseconds;
+            double prevTick = lastTickMs;
+            lastTickMs = now;
             if (running)
             {
                 var sw = Stopwatch.StartNew();
                 int steps = 0;
                 float q = 0.5f * solver.U0 * solver.U0 * refLen;
+                // während einer Bewegung so viel rechnen, wie ins Bild passt (volle Grafikkarte), sonst wie bisher
+                bool full = MotionActive;
+                double budget = full ? 12 : 22;   // kurze Bilder: Bewegung trifft die Uhr auf etwa 15 ms genau
+                int maxSteps = full ? 1000000 : 500;
                 do
                 {
                     // Pakete so groß wählen, dass sie ins Zeitbudget passen (GPU rechnet ein Paket ohne Pause durch)
-                    double left = 22 - sw.Elapsed.TotalMilliseconds;
+                    double left = budget - sw.Elapsed.TotalMilliseconds;
                     int batch = solver.OnGpu ? (int)Math.Max(1, Math.Min(batchFx.Length, 0.8 * left / Math.Max(1e-4, msPerStep))) : 1;
-                    batch = Math.Min(batch, 500 - steps);
+                    batch = Math.Min(batch, maxSteps - steps);
                     double t0 = sw.Elapsed.TotalMilliseconds;
                     solver.StepMany(batch, batchFx, batchFy);
                     double dt = sw.Elapsed.TotalMilliseconds - t0;
                     msPerStep = 0.7 * msPerStep + 0.3 * dt / batch;
                     for (int k = 0; k < batch; k++) stats.Add((float)(batchFx[k] / q), (float)(batchFy[k] / q));
                     steps += batch;
-                } while (sw.Elapsed.TotalMilliseconds < 22 && steps < 500);
+                } while (sw.Elapsed.TotalMilliseconds < budget && steps < maxSteps);
                 stepMsAcc += sw.Elapsed.TotalMilliseconds;
                 stepsAcc += steps;
 
@@ -635,7 +678,8 @@ namespace Windkanal
                     warningUntil = now + 9000;
                     return;
                 }
-                AdvanceMotion(steps);
+                double tickMs = prevTick < 0 ? 16 : Math.Min(100, now - prevTick);
+                AdvanceMotion(steps, tickMs);
                 solver.AdvectSmoke(steps);
                 if (showSmoke && viewMode != ViewMode.Rauch) particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
                 dirty = true;
@@ -763,8 +807,9 @@ namespace Windkanal
                 int x = Card.Pad + Theme.Width(cardView.Title, Theme.Title) + 12;
                 Color c = running ? Theme.Green : Theme.Orange;
                 x += Theme.Chip(g, running ? "Läuft" : "Pausiert", x, 18, c, Theme.Tint(c), 24, true) + 6;
-                x += Theme.Chip(g, solver.Backend, x, 18, Theme.Muted, Theme.Ctl) + 6;
-                if (model != null && model.HasMotion && !model.IsCustom && (motionDir != 0 || motion > 0))
+                bool movable = model != null && model.HasMotion && !model.IsCustom;
+                if (!movable) x += Theme.Chip(g, solver.Backend, x, 18, Theme.Muted, Theme.Ctl) + 6;
+                if (movable && (motionDir != 0 || motion > 0 || lastMotionSeconds >= 0))
                 {
                     Color mc = motionDir != 0 ? Theme.Accent : Theme.Muted;
                     x += Theme.Chip(g, MotionText(), x, 18, mc, Theme.Tint(mc)) + 6;
