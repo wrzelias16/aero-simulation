@@ -278,12 +278,12 @@ namespace Windkanal3D
             tbRe.ValueChanged += delegate { reynolds = SliderToRe(tbRe.Value); UpdateFlowParams(); UpdateLabels(); };
             hintRe = (HintLabel)add(new HintLabel(""), 18, 6);
             // echte Länge (in Strömungsrichtung) und echtes Tempo: daraus die echte Reynoldszahl und die Kräfte in Newton
-            int hw = (w - 8) / 2;
-            numMeters = new NumberBox { Caption = "Länge", Minimum = 0.01m, Maximum = 500m, Increment = 0.1m, Decimals = 2, Unit = "m", BackColor = Theme.Card };
-            numMeters.SetBounds(Card.Pad, y, hw, 40);
+            numMeters = new NumberBox { Caption = "Echte Länge", Minimum = 0.01m, Maximum = 500m, Increment = 0.1m, Decimals = 2, Unit = "m", BackColor = Theme.Card };
+            numMeters.SetBounds(Card.Pad, y, w, 40);
+            y += 48;
             numMeters.Value = 1.04m;
             numKmh = new NumberBox { Caption = "Tempo", Minimum = 0.1m, Maximum = 1500m, Increment = 10m, Decimals = 0, Unit = "km/h", BackColor = Theme.Card };
-            numKmh.SetBounds(Card.Pad + hw + 8, y, w - hw - 8, 40);
+            numKmh.SetBounds(Card.Pad, y, w, 40);
             numKmh.Value = 100m;
             numMeters.ValueChanged += delegate { ApplyRealSpeed(); };
             numKmh.ValueChanged += delegate { ApplyRealSpeed(); };
@@ -317,6 +317,11 @@ namespace Windkanal3D
 
             Controls.AddRange(new Control[] { cardView, cardCd, cardCl, cardKenn, cardSlice, cardSet });
             fileMenu = new FileMenu(this, cardView, SaveSession, LoadSession, ShowWarning);
+            // Einstellungen: bei niedrigen Fenstern mit Bildlaufleiste statt abgeschnitten
+            cardSet.AutoScroll = true;
+            cardSet.AutoScrollMargin = new Size(0, Card.Pad);
+            cardSet.Scroll += delegate { cardSet.Invalidate(); };
+            cardSet.HandleCreated += delegate { Theme.ThemeScrollbars(cardSet.Handle); };
             ResumeLayout();
             LayoutAll();
             UpdateLabels();
@@ -396,6 +401,7 @@ namespace Windkanal3D
             sliceView.SetBounds(12, Card.Head - 6, cardSlice.Width - 24, BottomH - Card.Head - 6);
 
             cardSet.SetBounds(rx, TopH, RightW, H - Outer - TopH);
+            cardSlice.Title = cardSlice.Width < 460 ? "Schnitt" : "Schnitt · Geschwindigkeit";   // kleines Fenster: kurzer Titel
             sceneDirty = true;
             Invalidate();
         }
@@ -469,7 +475,8 @@ namespace Windkanal3D
                 bool limited = reUsed < reynolds * 0.999;
                 double reReal = numKmh == null ? 0 : (double)numKmh.Value / 3.6 * (double)numMeters.Value / NuAir;
                 hintRe.Text = limited ? "Begrenzt auf Re " + FormatRe(reUsed) + " (höher wird der Rechenkern instabil)"
-                            : reReal > reynolds * 1.02 ? "Echt Re " + FormatRe(reReal) + ", gerechnet mit " + FormatRe(reynolds) + " (Grenze)"
+                            : reReal > reynolds * 1.02 ? "Echt Re " + FormatRe(reReal) + " · Simulation " + FormatRe(reynolds)
+                                                         + (tbRe.Value >= tbRe.Maximum ? " (Grenze)" : "")
                             : reynolds > 2000 ? "Mit Turbulenzmodell (LES) · Bezug: Länge des Körpers"
                             : "Bezugslänge: Länge des Körpers in Strömungsrichtung";
                 hintRe.Invalidate();
@@ -1143,7 +1150,12 @@ namespace Windkanal3D
                 x += Theme.Chip(g, fileMenu.RecordingText, x, 18, Theme.Pink, Theme.Tint(Theme.Pink), 24, true) + 8;
             if (warning != null)
                 Theme.Chip(g, warning, x, 18, Theme.Orange, Theme.Tint(Theme.Orange));
-            Theme.Draw(g, "Linke Maustaste: drehen  ·  Rechte Maustaste: verschieben  ·  Mausrad: zoomen  ·  Doppelklick: Ansicht zurücksetzen",
+            bool legend = vizMode == VizPressure && pressureLut != null;
+            string hint = "Linke Maustaste: drehen  ·  Rechte Maustaste: verschieben  ·  Mausrad: zoomen  ·  Doppelklick: Ansicht zurücksetzen";
+            int room = cardView.Width - 2 * Card.Pad - (legend ? 330 : 0);
+            if (Theme.Width(hint, Theme.Small) > room) hint = "Ziehen: drehen  ·  rechts ziehen: verschieben  ·  Rad: zoomen  ·  Doppelklick: zurück";
+            if (Theme.Width(hint, Theme.Small) > room) hint = "Ziehen · Rad · Doppelklick";
+            Theme.Draw(g, hint,
                        Theme.Small, Theme.Muted, new Rectangle(Card.Pad, cardView.Height - 34, cardView.Width - 2 * Card.Pad, 20), TextFormatFlags.VerticalCenter);
             if (vizMode == VizPressure && pressureLut != null)
             {
@@ -1284,7 +1296,7 @@ namespace Windkanal3D
             Theme.Prepare(g);
             int W = cardSlice.Width;
             // Farbskala rechts oben
-            int lw = 120, lx = W - Card.Pad - lw, ly = 26;
+            int lw = W < 420 ? 80 : 120, lx = W - Card.Pad - lw, ly = 26;
             for (int i = 0; i < lw; i++)
                 using (var p = new Pen(Color.FromArgb(sliceLut[i * 255 / (lw - 1)]))) g.DrawLine(p, lx + i, ly, lx + i, ly + 8);
             Theme.Draw(g, "0", Theme.Small, Theme.Muted, new Rectangle(lx - 40, ly - 5, 34, 18), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);

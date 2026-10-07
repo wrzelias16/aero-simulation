@@ -110,11 +110,11 @@ static class Vorschau3D
         form.ShowInTaskbar = false;
         form.ClientSize = new Size(1600, 960);
         int shot = 0;
-        string[] names = { "kugel_stromlinien", "ahmed_stromlinien", "ahmed_rauch", "ahmed_schnittebene", "ahmed_druck" };
+        string[] names = { "kugel_stromlinien", "ahmed_stromlinien", "ahmed_rauch", "ahmed_schnittebene", "ahmed_druck", "3d_ohne_bild", "3d_klein" };
         var t = new Timer { Interval = 5000 };
         t.Tick += delegate
         {
-            Save(form, Path.Combine(dir, "fenster_" + names[shot] + ".png"));
+            if (shot != 5) Save(form, Path.Combine(dir, "fenster_" + names[shot] + ".png"));
             shot++;
             if (shot == 1) Find<Windkanal.DropDown>(form).SelectedIndex = 1;        // Ahmed-Körper
             else if (shot == 2)
@@ -137,6 +137,8 @@ static class Vorschau3D
                 Find<Windkanal.Segmented>(form).SelectedIndex = 2;   // Schnittebene
             }
             else if (shot == 4) Find<Windkanal.Segmented>(form).SelectedIndex = 3;   // Oberflächendruck
+            else if (shot == 5) { form.ClientSize = new Size(1280, 800); t.Interval = 2000; }   // kleines Fenster
+            else if (shot == 6) { }   // nächster Takt speichert das kleine Fenster
             else { t.Stop(); form.Close(); }
         };
         form.Shown += delegate { t.Start(); };

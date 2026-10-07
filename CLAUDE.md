@@ -53,6 +53,13 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - Modelle werden mit `Quellcode/Modelle/Werkzeug/modelle_erzeugen.py` erzeugt. Achtung: das Skript schreibt alle
   Dateien mit LF neu; danach unveränderte Dateien mit `git ls-files -m Quellcode/Modelle | xargs git checkout --` zurücksetzen.
 
+## 2D: Vergleichsmodus
+- Einstellungen → „Vergleich“: zweite Strömung B (eigener Solver, gleiche Re/Größe/Winkel/Auflösung), anderes Modell
+  oder Klappe offen. A oben, B unten im Strömungsbild; Karten zeigen B und den Unterschied zu A in %, Verlauf B blass.
+  Gerechnet im Gleichschritt (gleiche Schrittzahl je Paket). Getestet: DRS zu 0,77 gegen offen 0,35 (−55 %).
+- Einstellungen-Karten (2D und 3D) scrollen bei niedrigen Fenstern; Titel/Legenden kürzen sich bei schmalen Karten.
+  Kleine Fenster (1280 × 800) prüft Vorschau3D mit (`fenster_2d_klein.png`, `fenster_3d_klein.png`).
+
 ## Datei-Menü (2D und 3D, `App/FileTools.cs`, `App/Recorder.cs`)
 - Sitzung speichern/öffnen (`*.windkanal`, Textzeilen „schlüssel: wert“, Strg+S / Strg+O); eine 3D-Sitzung im
   2D-Fenster geöffnet wechselt nach 3D und umgekehrt (Events OpenIn3D/OpenIn2D in Program.cs).

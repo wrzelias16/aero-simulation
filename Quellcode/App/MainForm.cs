@@ -316,20 +316,19 @@ namespace Windkanal
             };
             // Länge und Tempo des echten Objekts: daraus folgt die echte Reynoldszahl. Die Simulation übernimmt sie,
             // soweit das Gitter sie schafft (darüber ändern sich die Beiwerte meist nur noch wenig); die Kräfte gelten fürs echte Tempo.
-            int hw = (w - 8) / 2;
-            numMeters = new NumberBox { Caption = "Länge", Minimum = 0.001m, Maximum = 100m, Increment = 0.01m, Decimals = 3, Unit = "m", BackColor = Theme.Card };
-            numMeters.SetBounds(Card.Pad, Card.Head, hw, 40);
+            numMeters = new NumberBox { Caption = "Echte Länge", Minimum = 0.001m, Maximum = 100m, Increment = 0.01m, Decimals = 3, Unit = "m", BackColor = Theme.Card };
+            numMeters.SetBounds(Card.Pad, Card.Head, w, 40);
             numMeters.Value = 0.1m;
             numMeters.ValueChanged += delegate { ApplyRealSpeed(); };
             numKmh = new NumberBox { Caption = "Tempo", Minimum = 0.1m, Maximum = 1500m, Increment = 10m, Decimals = 0, Unit = "km/h", BackColor = Theme.Card };
-            numKmh.SetBounds(Card.Pad + hw + 8, Card.Head, w - hw - 8, 40);
+            numKmh.SetBounds(Card.Pad, Card.Head + 48, w, 40);
             numKmh.Value = 100m;
             numKmh.ValueChanged += delegate { ApplyRealSpeed(); };
             tips.SetToolTip(numKmh, "Geschwindigkeit des echten Objekts. Daraus folgt die Reynoldszahl; Widerstand und Auftrieb in Newton gelten für dieses Tempo.");
             rowsPhys = new InfoRows { BackColor = Theme.Card };
-            rowsPhys.SetBounds(Card.Pad, Card.Head + 52, w, 3 * InfoRows.Row);
+            rowsPhys.SetBounds(Card.Pad, Card.Head + 100, w, 3 * InfoRows.Row);
             var note = new HintLabel("Kräfte je Meter Spannweite (2D-Profil)") { BackColor = Theme.Card };
-            note.SetBounds(Card.Pad, Card.Head + 52 + 3 * InfoRows.Row + 6, w, 18);
+            note.SetBounds(Card.Pad, Card.Head + 100 + 3 * InfoRows.Row + 6, w, 18);
             cardAir.Controls.AddRange(new Control[] { numMeters, numKmh, rowsPhys, note });
 
             Controls.AddRange(new Control[] { cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir });
@@ -386,8 +385,9 @@ namespace Windkanal
             cardKenn.SetBounds(Outer + 2 * (cw + Gap), by, kw, BottomH);
             int chx = Outer + 2 * (cw + Gap) + kw + Gap;
             cardChart.SetBounds(chx, by, Math.Max(100, Outer + lw - chx), BottomH);
+            cardChart.Title = cardChart.Width < 460 ? "Verlauf" : "Kraftbeiwerte über der Zeit";   // kleines Fenster: kurzer Titel
 
-            int airH = Card.Head + 52 + 3 * InfoRows.Row + 6 + 18 + 18;
+            int airH = Card.Head + 100 + 3 * InfoRows.Row + 6 + 18 + 18;
             cardAir.SetBounds(rx, H - Outer - airH, RightW, airH);
             cardSet.SetBounds(rx, TopH, RightW, H - Outer - airH - Gap - TopH);
             Invalidate();
@@ -1302,16 +1302,19 @@ namespace Windkanal
             Theme.Prepare(g);
             var r = cardChart.ClientRectangle;
             if (r.Width < 160) return;
-            int lx = r.Width - Card.Pad;
-            lx -= Theme.ChipWidth("ca  Auftrieb", true);
-            Theme.Chip(g, "ca  Auftrieb", lx, 18, Theme.Pink, Theme.Tint(Theme.Pink), 24, true);
-            int w2 = Theme.ChipWidth("cw  Widerstand", true);
-            Theme.Chip(g, "cw  Widerstand", lx - 6 - w2, 18, Theme.Accent, Theme.Tint(Theme.Accent), 24, true);
-            if (compare && solverB != null)
-            {
-                int w3 = Theme.ChipWidth("B blass");
-                Theme.Chip(g, "B blass", lx - 12 - w2 - w3, 18, Theme.Muted, Theme.Ctl);
-            }
+            // Legende rechts im Kopf: lang, wenn Platz ist, sonst kurz; „B blass“ nur, wenn es noch passt
+            int titleEnd = Card.Pad + Theme.Width(cardChart.Title, Theme.Title) + 12;
+            bool withLegendB = compare && solverB != null;
+            string tCd = "cw  Widerstand", tCl = "ca  Auftrieb";
+            int need = Theme.ChipWidth(tCd, true) + Theme.ChipWidth(tCl, true) + 6;
+            if (r.Width - Card.Pad - need < titleEnd) { tCd = "cw"; tCl = "ca"; need = Theme.ChipWidth(tCd, true) + Theme.ChipWidth(tCl, true) + 6; }
+            int wB = Theme.ChipWidth("B blass");
+            if (r.Width - Card.Pad - need - 6 - wB < titleEnd) withLegendB = false;
+            int lx = r.Width - Card.Pad - Theme.ChipWidth(tCl, true);
+            Theme.Chip(g, tCl, lx, 18, Theme.Pink, Theme.Tint(Theme.Pink), 24, true);
+            int w2 = Theme.ChipWidth(tCd, true);
+            Theme.Chip(g, tCd, lx - 6 - w2, 18, Theme.Accent, Theme.Tint(Theme.Accent), 24, true);
+            if (withLegendB) Theme.Chip(g, "B blass", lx - 12 - w2 - wB, 18, Theme.Muted, Theme.Ctl);
 
             var plot = new Rectangle(r.Left + Card.Pad + 40, r.Top + Card.Head + 4, r.Width - 2 * Card.Pad - 40, r.Height - Card.Head - 4 - 34);
             if (plot.Width < 20 || plot.Height < 20 || solver == null) return;
@@ -1362,7 +1365,9 @@ namespace Windkanal
             DrawSeries(g, plot, span, lo, hi, false, stats, false);
 
             double spanT = span / T;
-            Theme.Chip(g, "letzte " + F(spanT, "0") + " Zeiteinheiten", plot.Left, plot.Bottom + 8, Theme.Muted, Theme.Ctl, 22);
+            string spanText = "letzte " + F(spanT, "0") + " Zeiteinheiten";
+            if (Theme.ChipWidth(spanText) + Theme.ChipWidth("jetzt") + 12 < plot.Width)
+                Theme.Chip(g, spanText, plot.Left, plot.Bottom + 8, Theme.Muted, Theme.Ctl, 22);
             int jw = Theme.ChipWidth("jetzt");
             Theme.Chip(g, "jetzt", plot.Right - jw, plot.Bottom + 8, Theme.Text, Theme.Ctl, 22);
         }
