@@ -18,6 +18,8 @@ namespace Windkanal3D
         public double PanX, PanY;
 
         public float[] Triangles;            // Zellkoordinaten
+        /// <summary>Eigene Farbe je Dreieck (z. B. Oberflächendruck), null = einheitliche Körperfarbe.</summary>
+        public int[] TriColors;
         public int NX = 256, NY = 112, NZ = 112;
         /// <summary>Schnittebene: -1 = keine, 0 = Seitenschnitt (y = SliceIndex), 1 = Draufsicht (z = SliceIndex).</summary>
         public int SliceAxis = -1, SliceIndex;
@@ -190,7 +192,9 @@ namespace Windkanal3D
                 double fill = Math.Max(0, nx * -rx * 0.6 + nz * -0.3 + ny * 0.1) * 0.25;   // schwaches Gegenlicht
                 double rim = Math.Pow(1 - Math.Abs(nx * fx + ny * fy + nz * fz), 3) * 0.18;
                 double k2 = 0.30 + 0.62 * diff + fill + rim;
-                col[i] = Shade(Body, k2);
+                if (TriColors != null && TriColors.Length == n)
+                    col[i] = Shade(Color.FromArgb(TriColors[i]), 0.62 + 0.38 * Math.Min(1.3, k2) / 1.3);   // Farbe soll lesbar bleiben
+                else col[i] = Shade(Body, k2);
             });
 
             int bands = Math.Max(1, Math.Min(64, Environment.ProcessorCount * 2));

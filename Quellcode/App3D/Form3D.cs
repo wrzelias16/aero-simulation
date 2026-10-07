@@ -34,8 +34,14 @@ namespace Windkanal3D
         string gpuError;
         int resIndex = 1, sizePercent = 25, yaw, pitch, sliceAxis, slicePos = 50;
         bool onGround, running = true, suppress;
-        /// <summary>Darstellung in der 3D-Ansicht: 0 = Stromlinien, 1 = Rauch, 2 = Schnittebene, 3 = nur Körper.</summary>
+        /// <summary>Darstellung in der 3D-Ansicht: 0 = Stromlinien, 1 = Rauch, 2 = Schnittebene, 3 = Oberflächendruck, 4 = nur Körper.</summary>
         int vizMode;
+        const int VizPressure = 3, VizBody = 4;
+        int[] probeCells;          // je Dreieck die Fluidzelle direkt vor der Oberfläche (-1 = keine)
+        float[] fineTris;          // fein unterteilte Oberfläche für die Druckfarben (große Flächen bekommen sonst nur eine Farbe)
+        int[] pressureLut;
+        double lastPressure;
+        FlatButton btnShot;
         FlowField field;
         List<float[]> rakeLines, rakeSmoke;
         double lastField, lastLines;
@@ -156,15 +162,21 @@ namespace Windkanal3D
             btnTheme.Click += delegate { SwitchTheme(); };
             UpdateThemeButton();
             segViz = new Segmented { BackColor = Theme.Bg };
-            segViz.Items.AddRange(new[] { "Stromlinien", "Rauch", "Schnittebene", "Nur Körper" });
+            segViz.Items.AddRange(new[] { "Stromlinien", "Rauch", "Schnittebene", "Oberflächendruck", "Nur Körper" });
             segViz.SelectedIndexChanged += delegate
             {
                 vizMode = segViz.SelectedIndex;
                 ApplySmokeMode();
-                lastLines = lastField = 0;
+                lastLines = lastField = lastPressure = 0;
+                if (vizMode != VizPressure) { scene.TriColors = null; if (place != null) scene.Triangles = place.World; }
                 UpdateSceneFlow();
+                cardView.Invalidate();
             };
-            Controls.AddRange(new Control[] { segViz, segMode, btnRun, btnReset, btnTheme });
+            btnShot = new FlatButton { Icon = "\uE722", BackColor = Theme.Bg };
+            if (Theme.Icons == null) btnShot.Text = "Bild";
+            tips.SetToolTip(btnShot, "3D-Ansicht als Bild speichern (PNG)");
+            btnShot.Click += delegate { SaveShot(); };
+            Controls.AddRange(new Control[] { segViz, segMode, btnRun, btnReset, btnTheme, btnShot });
 
             // --- 3D-Ansicht
             cardView = new Card("3D-Ansicht");
@@ -326,7 +338,7 @@ namespace Windkanal3D
 
             int bh = 40, by0 = (TopH - bh) / 2 + 2, x = W - Outer;
             x -= 116; btnRun.SetBounds(x, by0, 116, bh);
-            foreach (var b in new[] { btnReset, btnTheme })
+            foreach (var b in new[] { btnReset, btnTheme, btnShot })
             {
                 int bw = b.Text.Length > 0 ? Theme.Width(b.Text, b.Font) + 32 : bh;
                 x -= 10 + bw;
@@ -590,6 +602,9 @@ namespace Windkanal3D
             try
             {
                 place = np;
+                probeCells = null;
+                fineTris = null;
+                scene.TriColors = null;
                 scene.Triangles = place.World;
                 if (lbm != null) lbm.SetSolid(place.Solid);
                 BuildRakes();
@@ -823,9 +838,13 @@ namespace Windkanal3D
         /// <summary>Geschwindigkeitsfeld holen, Stromlinien bzw. Rauch nachführen und die 3D-Ansicht neu zeichnen.</summary>
         void UpdateFlowView(double now)
         {
-            if (lbm == null || vizMode == 3) return;
+            if (lbm == null || vizMode == VizBody) return;
             bool redraw = false;
-            if (vizMode == 2)
+            if (vizMode == VizPressure)
+            {
+                if (now - lastPressure > 250) { lastPressure = now; UpdateSurfacePressure(); redraw = true; }
+            }
+            else if (vizMode == 2)
             {
                 if (now - lastField > 150) { lastField = now; redraw = true; }   // Schnittebene kommt aus RenderSlice
             }
@@ -852,6 +871,108 @@ namespace Windkanal3D
             }
             // höchstens etwa 30 Bilder pro Sekunde, damit die Rechnung Vorrang hat
             if (redraw && now - lastRender > 33) { lastRender = now; UpdateSceneFlow(); }
+        }
+
+        /// <summary>
+        /// Je Dreieck die Zelle direkt vor der Oberfläche (1,2 Zellen entlang der Flächennormale, auf der Seite, die Luft ist).
+        /// </summary>
+        /// <summary>Dreiecke so lange an der längsten Kante teilen, bis keine Kante länger als 'maxEdge' Zellen ist.</summary>
+        static float[] Subdivide(float[] src, float maxEdge, int maxTris)
+        {
+            var outp = new List<float>(src.Length * 4);
+            var stack = new Stack<float[]>();
+            for (int t = 0; t < src.Length; t += 9)
+            {
+                var tri = new float[9];
+                Array.Copy(src, t, tri, 0, 9);
+                stack.Push(tri);
+                while (stack.Count > 0)
+                {
+                    var a = stack.Pop();
+                    int e = -1; float best = maxEdge * maxEdge;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int i = 3 * k, j = 3 * ((k + 1) % 3);
+                        float dx = a[i] - a[j], dy = a[i + 1] - a[j + 1], dz = a[i + 2] - a[j + 2], l = dx * dx + dy * dy + dz * dz;
+                        if (l > best) { best = l; e = k; }
+                    }
+                    if (e < 0 || outp.Count / 9 + stack.Count >= maxTris) { outp.AddRange(a); continue; }
+                    int p0 = 3 * e, p1 = 3 * ((e + 1) % 3), p2 = 3 * ((e + 2) % 3);
+                    var m = new[] { (a[p0] + a[p1]) / 2, (a[p0 + 1] + a[p1 + 1]) / 2, (a[p0 + 2] + a[p1 + 2]) / 2 };
+                    stack.Push(new[] { a[p0], a[p0 + 1], a[p0 + 2], m[0], m[1], m[2], a[p2], a[p2 + 1], a[p2 + 2] });
+                    stack.Push(new[] { m[0], m[1], m[2], a[p1], a[p1 + 1], a[p1 + 2], a[p2], a[p2 + 1], a[p2 + 2] });
+                }
+            }
+            return outp.ToArray();
+        }
+
+        void BuildProbeCells()
+        {
+            fineTris = Subdivide(place.World, 1.5f, 600000);
+            var w = fineTris;
+            int n = w.Length / 9, NX = scene.NX, NY = scene.NY, NZ = scene.NZ;
+            var cells = new int[n];
+            var solid = place.Solid;
+            System.Threading.Tasks.Parallel.For(0, n, i =>
+            {
+                int o = i * 9;
+                double cx = (w[o] + w[o + 3] + w[o + 6]) / 3, cy = (w[o + 1] + w[o + 4] + w[o + 7]) / 3, cz = (w[o + 2] + w[o + 5] + w[o + 8]) / 3;
+                double ax = w[o + 3] - w[o], ay = w[o + 4] - w[o + 1], az = w[o + 5] - w[o + 2];
+                double bx = w[o + 6] - w[o], by = w[o + 7] - w[o + 1], bz = w[o + 8] - w[o + 2];
+                double nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx, nl = Math.Sqrt(nx * nx + ny * ny + nz * nz);
+                cells[i] = -1;
+                if (nl < 1e-12) return;
+                nx /= nl; ny /= nl; nz /= nl;
+                foreach (double d in new[] { 1.2, -1.2, 2.0, -2.0 })
+                {
+                    int x = (int)Math.Floor(cx + d * nx), y = (int)Math.Floor(cy + d * ny), z = (int)Math.Floor(cz + d * nz);
+                    if (x < 1 || y < 0 || z < 0 || x >= NX - 1 || y >= NY || z >= NZ) continue;
+                    int c = x + NX * (y + NY * z);
+                    if (solid[c] == 0) { cells[i] = c; return; }
+                }
+            });
+            probeCells = cells;
+        }
+
+        /// <summary>Körper nach dem Druckbeiwert cp einfärben (blau = Sog, weiß = Umgebungsdruck, rot = Staudruck).</summary>
+        void UpdateSurfacePressure()
+        {
+            if (place == null) return;
+            if (probeCells == null || fineTris == null) BuildProbeCells();
+            if (pressureLut == null)
+                pressureLut = BuildLut(new float[,] { { 0.00f, 33, 76, 160 }, { 0.25f, 103, 169, 207 }, { 0.50f, 247, 247, 247 },
+                                                      { 0.75f, 239, 138, 98 }, { 1.00f, 178, 24, 43 } });   // wie die Druckansicht in 2D
+            float[] rho;
+            EnterGpu();
+            try { if (lbm == null) return; rho = lbm.ReadDensityAt(probeCells); }
+            finally { LeaveGpu(); }
+            double q = 0.5 * UIn * UIn;
+            var col = new int[rho.Length];
+            int gray = Color.FromArgb(150, 155, 165).ToArgb();
+            for (int i = 0; i < rho.Length; i++)
+            {
+                if (probeCells[i] < 0) { col[i] = gray; continue; }
+                double cp = (rho[i] - 1.0) / 3.0 / q;
+                col[i] = pressureLut[Math.Max(0, Math.Min(255, (int)((cp + 2) / 3 * 255)))];   // cp -2 … +1
+            }
+            scene.Triangles = fineTris;
+            scene.TriColors = col;
+        }
+
+        void SaveShot()
+        {
+            if (sceneBmp == null) return;
+            using (var dlg = new SaveFileDialog { Filter = "PNG-Bild (*.png)|*.png", FileName = "windkanal-3d-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png",
+                                                   InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures) })
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                try
+                {
+                    using (var copy = new Bitmap(sceneBmp)) copy.Save(dlg.FileName, System.Drawing.Imaging.ImageFormat.Png);
+                    ShowWarning("Bild gespeichert: " + System.IO.Path.GetFileName(dlg.FileName));
+                }
+                catch (Exception ex) { ShowWarning("Bild konnte nicht gespeichert werden: " + ex.Message); }
+            }
         }
 
         void UpdateSceneFlow()
@@ -904,6 +1025,14 @@ namespace Windkanal3D
                 Theme.Chip(g, warning, x, 18, Theme.Orange, Theme.Tint(Theme.Orange));
             Theme.Draw(g, "Linke Maustaste: drehen  ·  Rechte Maustaste: verschieben  ·  Mausrad: zoomen  ·  Doppelklick: Ansicht zurücksetzen",
                        Theme.Small, Theme.Muted, new Rectangle(Card.Pad, cardView.Height - 34, cardView.Width - 2 * Card.Pad, 20), TextFormatFlags.VerticalCenter);
+            if (vizMode == VizPressure && pressureLut != null)
+            {
+                int lw = 140, lx = cardView.Width - Card.Pad - lw, ly = cardView.Height - 28;
+                for (int i = 0; i < lw; i++)
+                    using (var p = new Pen(Color.FromArgb(pressureLut[i * 255 / (lw - 1)]))) g.DrawLine(p, lx + i, ly, lx + i, ly + 8);
+                Theme.Draw(g, "Druckbeiwert cp   −2", Theme.Small, Theme.Muted, new Rectangle(lx - 150, ly - 6, 146, 20), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                Theme.Draw(g, "+1", Theme.Small, Theme.Muted, new Rectangle(lx + lw + 4, ly - 6, 30, 20), TextFormatFlags.VerticalCenter);
+            }
         }
 
         void OnViewDown(object sender, MouseEventArgs e)
@@ -957,10 +1086,14 @@ namespace Windkanal3D
         static int[] BuildSpeedLut()
         {
             // dieselben Farben wie die Geschwindigkeitsansicht in 2D
-            float[,] s = {
+            return BuildLut(new float[,] {
                 { 0.00f, 48, 18, 59 }, { 0.13f, 70, 107, 227 }, { 0.25f, 40, 170, 250 }, { 0.38f, 26, 228, 182 },
                 { 0.50f, 106, 253, 98 }, { 0.63f, 196, 240, 52 }, { 0.75f, 251, 185, 56 }, { 0.88f, 237, 97, 23 },
-                { 1.00f, 122, 4, 3 } };
+                { 1.00f, 122, 4, 3 } });
+        }
+
+        static int[] BuildLut(float[,] s)
+        {
             var lut = new int[256];
             int n = s.GetLength(0);
             for (int i = 0; i < 256; i++)

@@ -109,7 +109,9 @@ namespace Windkanal3D
         /// <summary>Verteilungen in halber Genauigkeit gespeichert (gerechnet wird immer in voller).</summary>
         public readonly bool Fp16;
         readonly int groups, local;
-        IntPtr program, kStep, kBounds, kInit, kMacro, kSlice, kCoarse;
+        IntPtr program, kStep, kBounds, kInit, kMacro, kSlice, kCoarse, kProbe;
+        IntPtr bProbeIdx, bProbeOut;
+        int probeCap;
         IntPtr bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse;
         long coarseBytes;
 
@@ -165,6 +167,7 @@ namespace Windkanal3D
             kMacro = Kernel("lbm3_macro");
             kSlice = Kernel("lbm3_slice");
             kCoarse = Kernel("lbm3_coarse");
+            kProbe = Kernel("lbm3_probe");
             kSmTrace = Kernel("smoke3_trace");
             kSmCorrect = Kernel("smoke3_correct");
             kSmInject = Kernel("smoke3_inject");
@@ -292,6 +295,25 @@ namespace Windkanal3D
             Run(kCoarse, count);
             var data = new float[count * 3];
             Check(CL.clEnqueueReadBuffer(queue, bCoarse, 1, UIntPtr.Zero, (UIntPtr)(count * 12), data, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
+            return data;
+        }
+
+        /// <summary>Dichte an den angegebenen Zellen (Index x + NX * (y + NY * z)); daraus folgt der Druck p = (Dichte - 1) / 3.</summary>
+        public float[] ReadDensityAt(int[] cells)
+        {
+            int n = Math.Max(1, cells.Length);
+            if (n > probeCap)
+            {
+                if (bProbeIdx != IntPtr.Zero) { CL.clReleaseMemObject(bProbeIdx); CL.clReleaseMemObject(bProbeOut); }
+                probeCap = n;
+                bProbeIdx = Buffer(n * 4L); bProbeOut = Buffer(n * 4L);
+            }
+            var data = new float[cells.Length];
+            if (cells.Length == 0) return data;
+            Check(CL.clEnqueueWriteBuffer(queue, bProbeIdx, 1, UIntPtr.Zero, (UIntPtr)(cells.Length * 4L), cells, 0, IntPtr.Zero, IntPtr.Zero), "Schreiben");
+            Arg(kProbe, 0, Src); Arg(kProbe, 1, bProbeIdx); Arg(kProbe, 2, bProbeOut); Arg(kProbe, 3, cells.Length);
+            Run(kProbe, cells.Length);
+            Check(CL.clEnqueueReadBuffer(queue, bProbeOut, 1, UIntPtr.Zero, (UIntPtr)(cells.Length * 4L), data, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
             return data;
         }
 
@@ -431,14 +453,14 @@ namespace Windkanal3D
 
         public void Dispose()
         {
-            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse, bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage })
+            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse, bProbeIdx, bProbeOut, bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage })
                 if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
-            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender })
+            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse, kProbe, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender })
                 if (k != IntPtr.Zero) CL.clReleaseKernel(k);
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
-            bufA = bufB = bFlag = bForce = bMacro = bSlice = bCoarse = IntPtr.Zero;
+            bufA = bufB = bFlag = bForce = bMacro = bSlice = bCoarse = bProbeIdx = bProbeOut = IntPtr.Zero;
             bUx = bUy = bUz = bPhi = bPhiNew = bHat = bBar = bSources = bDepth = bImage = IntPtr.Zero;
-            kStep = kBounds = kInit = kMacro = kSlice = kCoarse = IntPtr.Zero;
+            kStep = kBounds = kInit = kMacro = kSlice = kCoarse = kProbe = IntPtr.Zero;
             kSmTrace = kSmCorrect = kSmInject = kSmClear = kSmRender = IntPtr.Zero;
             program = IntPtr.Zero;
         }
@@ -677,6 +699,17 @@ __kernel void lbm3_coarse(__global const FT* src, __global const uchar* flag, __
     out[3 * j] = mx / rho; out[3 * j + 1] = my / rho; out[3 * j + 2] = mz / rho;
 }
 
+__kernel void lbm3_probe(__global const FT* src, __global const int* cells, __global float* out, int count)
+{
+    int j = get_global_id(0);
+    if (j >= count) return;
+    int c = cells[j];
+    if (c < 0) { out[j] = 1.0f; return; }
+    float rho = 0.0f;
+    for (int i = 0; i < 19; i++) rho += LD(src, i * N + c, i);
+    out[j] = rho;
+}
+
 // ---- Rauch ----
 // Der Rauch hat ein eigenes Gitter: ein Kasten ab Strömungszelle (OX, OY, OZ) mit SNX x SNY x SNZ Rauchzellen,
 // R Rauchzellen je Strömungszelle und Richtung. Die Geschwindigkeit kommt trilinear aus dem Strömungsgitter.
@@ -868,6 +901,7 @@ __kernel void smoke3_render(__global const float* phi, __global const float* inv
         [DllImport(Lib)] public static extern int clEnqueueNDRangeKernel(IntPtr queue, IntPtr kernel, uint dim, IntPtr offset, UIntPtr[] global, UIntPtr[] local, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueWriteBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [In] byte[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueWriteBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [In] float[] data, uint numEvents, IntPtr events, IntPtr evt);
+        [DllImport(Lib)] public static extern int clEnqueueWriteBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [In] int[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueReadBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [Out] float[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueReadBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [Out] byte[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clReleaseMemObject(IntPtr mem);

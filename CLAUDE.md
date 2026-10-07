@@ -30,7 +30,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - Rauch: echtes Dichtefeld auf eigenem Gitter (Kasten um Körper + Nachlauf, `SetSmokeBox`, meist 2x feiner) auf der GPU (`Lbm3D.SmokeOn`, semi-Lagrange + MacCormack wie in 2D,
   alle 2 Strömungsschritte), als Volumen gezeichnet (`RenderSmoke`, Strahlen mit Tiefe aus `Scene.Overlay`).
 - `Form3D.cs`: 3D-Fenster. Achsen: x = Strömung, y = seitlich, z = oben. Darstellung: Stromlinien, Rauch,
-  Schnittebene im Raum, nur Körper. Geladene Modelle werden automatisch ausgerichtet (`Mesh.AutoOrient`:
+  Schnittebene im Raum, Oberflächendruck (cp je fein unterteiltem Dreieck, Dichte der Zelle davor), nur Körper.
+  Kamera-Knopf speichert die 3D-Ansicht als PNG. Geladene Modelle werden automatisch ausgerichtet (`Mesh.AutoOrient`:
   längste Seite = x, flachste = oben, höheres Ende = hinten), Knöpfe X/Y/Z kippen um 90°, 180° tauscht vorne/hinten. Schrittzahl pro Bild nur nach GPU-Zeit
   bemessen, sonst bremst das Zeichnen die Rechnung aus. Gerechnet wird in einem eigenen Thread (`SimLoop`), alle
   GPU-Zugriffe unter `lock (gpu)` bzw. `EnterGpu/LeaveGpu`. Auflösung beim Start per Probe-Rechnung gewählt
@@ -40,6 +41,14 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   `Vorschau3D.exe <Ordner>` (Import-Rundreise, Zellen, speichert Bilder vom 3D- und 2D-Fenster ohne Bildschirmfoto).
 - Rechner: PC RTX 5070 Ti (16 GB) + Core Ultra 7 265KF, 32 GB RAM; Laptop GTX 1660 Ti (6 GB, kleinere Gitter).
   CUDA ist auf dem PC installiert; Rechenkern-Optimierung ist bewusst zurückgestellt.
+
+## 2D: bewegliche Teile
+- Modellformat kann bewegliche Teile (`bewegung: x y grad` am Teil, `bewegung-name/-dauer/-tempo`, `bezug-meter`).
+  Dauer in Rechenschritten = gleich viele Überströmungen der Bezugslänge wie am echten Auto.
+- Modelle: Heckflügel mit DRS (2025: < 400 ms, 85 mm, Art. 3.10.10), Heckflügel 2026 „Macarena“ (Ferrari SF-26,
+  Flap dreht 180°; Drehpunkt Sehnenmitte = Annahme), F1-Wagen mit animiertem DRS. Knopf im Strömungsbild, Taste D.
+- Modelle werden mit `Quellcode/Modelle/Werkzeug/modelle_erzeugen.py` erzeugt. Achtung: das Skript schreibt alle
+  Dateien mit LF neu; danach unveränderte Dateien mit `git ls-files -m Quellcode/Modelle | xargs git checkout --` zurücksetzen.
 
 ## Bauen und Testen
 - Bauen (ohne SDK, nutzt csc aus .NET Framework 4.8):
