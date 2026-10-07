@@ -436,6 +436,8 @@ namespace WindkanalSetup
             if (!busy && !done && status.Length == 0)
             {
                 if (uninstallMode && !inst) SetStatus(AppInfo.Name + " ist nicht installiert.", "", Theme.Muted);
+                else if (uninstallMode && needsAdmin) SetStatus("Zum Entfernen braucht es Administratorrechte.", "Windows fragt beim Deinstallieren nach.", Theme.Orange);
+                else if (uninstallMode) SetStatus(AppInfo.Name + " ist installiert.", "Deinstallieren entfernt Programm, Verknüpfungen und den Eintrag in Windows.", Theme.Green);
                 else if (needsAdmin) SetStatus("Für diesen Ordner braucht es Administratorrechte.", "Windows fragt beim Installieren nach. Oder einen anderen Ordner wählen.", Theme.Orange);
                 else if (inst) SetStatus(AppInfo.Name + " ist installiert.", "Neu installieren ersetzt das Programm durch diese Version " + AppInfo.Version + ".", Theme.Green);
                 else SetStatus("Bereit zur Installation.", "Ohne Adminrechte, solange der Ordner dir gehört.", Theme.Muted);
