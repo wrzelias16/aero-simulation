@@ -89,6 +89,12 @@ $preview = Join-Path $bin 'ModellVorschau.exe'
     (Join-Path $root 'App\Shapes.cs') (Join-Path $root 'App\Models.cs') (Join-Path $root 'Test\ModellVorschau.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Vorschau-Build fehlgeschlagen' }
 
+# --- 3D-Rechenkern-Test (Konsole, eigenständig, nutzt keinen 2D-Code) ---
+$test3d = Join-Path $bin 'Test3D.exe'
+& $csc /nologo /optimize+ /platform:x64 /out:$test3d `
+    (Join-Path $root 'App3D\Lbm3D.cs') (Join-Path $root 'Test\Test3D.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Test3D-Build fehlgeschlagen' }
+
 # --- Installer (App als eingebettete Ressource) ---
 $setup = Join-Path $bin 'Setup.exe'
 & $csc /nologo /target:winexe /optimize+ /win32icon:$ico `
