@@ -4,7 +4,7 @@ Virtueller Windkanal für Windows in C# (.NET Framework 4.8), Windows-.exe.
 Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steht in `README.md`.
 
 ## Stand
-- **v1.0.0** (Release auf GitHub, von Elias so gewünscht): erste stabile Version mit 2D **und** 3D, alles unten beschrieben.
+- **v1.0.1** (aktuell; v1.0.0 = erste stabile Version, Release auf GitHub, von Elias so gewünscht; 1.0.1 bringt den neuen Ein-Datei-Installer): erste stabile Version mit 2D **und** 3D, alles unten beschrieben.
 - **v0.0.1** = frühere reine 2D-Version ("Windkanal 2D").
 - GPU-Löser (OpenCL, CPU-Fallback), neues UI (Schrift Outfit, Hell/Dunkel, Startfenster), Rauchmodus,
   79 Modelle als Textdateien (`Quellcode/Modelle/LIESMICH.md`, keine echten CAD-Daten), Anzeige "Feinstes Detail".

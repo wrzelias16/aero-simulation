@@ -4,7 +4,7 @@ Virtueller Windkanal für Windows in **2D und 3D**: Strömung um Zylinder, Tragf
 Formen (2D gezeichnet, 3D als STL/OBJ geladen), mit Rauch, Stromlinien, Druck- und Wirbelansicht sowie Messwerten
 für Widerstand und Auftrieb.
 
-**Version 1.0.0** (erste stabile 2D- und 3D-Version):
+**Version 1.0.1** (erste stabile 2D- und 3D-Version, ab 1.0.1 mit neuem Installer):
 - **3D:** D3Q19-Löser auf der Grafikkarte (FP16-Speicher, Turbulenzmodell LES bis Re 1 Mio.), STL/OBJ-Import mit
   automatischer Ausrichtung, Stromlinien, echter Rauch, Schnittebene, Oberflächendruck, Kräfte in N und kg.
 - **2D:** animiertes DRS, Macarena-Flügel, aktive Aero 2026, Landeklappe (eigene Kategorie, Echtzeit-Modus),
