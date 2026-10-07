@@ -70,6 +70,13 @@ f1-unterboden
 f1-komplett
 f1-komplett-drs
 
+[Animiert · Klappen & aktive Aero]
+f1-heckfluegel-drs
+f1-heckfluegel-macarena
+f1-komplett-drs-animiert
+f1-komplett-2026-aktiv
+landeklappe-animiert
+
 [Straßenfahrzeuge]
 limousine
 fliessheck

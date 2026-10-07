@@ -1,0 +1,121 @@
+# Formel-1-Wagen mit DRS (animiert)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+# Am ganzen Auto sind die Flügelspalte auf 45 mm vergrößert (sonst schmaler als eine Gitterzelle); die einzelnen Flügelmodelle haben die echten Spalte.
+# Räder, Flügel und Seitenkasten liegen in Wirklichkeit nebeneinander; im 2D-Schnitt sind sie so angeordnet, dass sich die Flügel nicht mit den Rädern überdecken.
+name: Formel-1-Wagen mit DRS (animiert)
+beschreibung: Ganzes Auto, Knopf „DRS öffnen“ oder Taste D: das DRS öffnet in 0,4 s (bei 300 km/h).
+quelle: Eigene Konstruktion nach den öffentlichen Maßen des FIA-Reglements 2022–2025 (Radstand 3600 mm, Raddurchmesser 720 mm, Höhe bis 950 mm, DRS-Schlitz 85 mm); Flügelelemente Selig S1223 und Eppler E423 (UIUC-Datenbank). Kein bestimmtes Team-Fahrzeug; DRS-Wechsel in weniger als 400 ms (Reglement 2025, Art. 3.10.10)
+lizenz: Teil dieses Projekts
+bezug: Stirnhöhe
+groesse: 55
+winkel: 0
+reynolds: 1000
+detail: 0.00804
+boden: ja
+bewegung-name: DRS
+bewegung-dauer: 0.4
+bewegung-tempo: 300
+bezug-meter: 0.95
+
+teil: Karosserie
+glatt: 5
+punkte:
+  0.03036 0.03661
+  0.02321 0.04071
+  0.02857 0.04464
+  0.075 0.05357
+  0.14286 0.06786
+  0.20536 0.08214
+  0.26786 0.09643
+  0.325 0.10893
+  0.33929 0.11786 !
+  0.35357 0.12321
+  0.36429 0.13571
+  0.37857 0.14375
+  0.39643 0.14429
+  0.41071 0.1375
+  0.41607 0.12857 !
+  0.43214 0.13214
+  0.44107 0.15714
+  0.45357 0.16875
+  0.48214 0.16786
+  0.53571 0.15357
+  0.625 0.125
+  0.71429 0.10357
+  0.78571 0.09286
+  0.85714 0.08393
+  0.89643 0.08036
+  0.90714 0.075 !
+  0.91071 0.05893 !
+  0.88393 0.05089
+  0.80357 0.02679
+  0.75 0.00804 !
+  0.53571 0.00536 !
+  0.28571 0.00536 !
+  0.25893 0.00804 !
+  0.24107 0.02143
+  0.20536 0.02679
+  0.125 0.03125
+  0.05357 0.03393
+
+teil: Halo vorn
+stab: 0.32679 0.125 0.37857 0.15893 0.00607
+
+teil: Halo oben
+stab: 0.37857 0.15893 0.425 0.15714 0.00607
+
+teil: Vorderrad
+kreis: 0.20536 0.06429 0.06429 96
+
+teil: Hinterrad
+kreis: 0.84821 0.06429 0.06429 96
+
+teil: Frontflügel Hauptblatt
+profil: s1223
+sehne: 0.05314
+winkel: -4
+spiegeln: ja
+lage: 0 0.01518
+
+teil: Frontflügel Flap 1
+profil: s1223
+sehne: 0.03543
+winkel: -20
+lage: 0.0497 0.02887
+spiegeln: ja
+
+teil: Frontflügel Flap 2
+profil: s1223
+sehne: 0.02879
+winkel: -38
+lage: 0.07987 0.04967
+spiegeln: ja
+
+teil: Heckflügel Hauptblatt
+profil: s1223
+sehne: 0.05357
+winkel: -6
+spiegeln: ja
+lage: 0.90357 0.14286
+
+teil: Heckflügel Flap
+profil: s1223
+sehne: 0.0375
+winkel: -38
+lage: 0.95374 0.1574
+spiegeln: ja
+bewegung: 0.98329 0.18048 14.07184
+
+teil: Beam Wing 1
+profil: e423
+sehne: 0.03241
+winkel: -2
+spiegeln: ja
+lage: 0.925 0.08393
+
+teil: Beam Wing 2
+profil: e423
+sehne: 0.02652
+winkel: -20
+lage: 0.95562 0.09456
+spiegeln: ja

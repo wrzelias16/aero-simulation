@@ -1,0 +1,26 @@
+# Flügel mit ausfahrender Landeklappe (animiert)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Flügel mit ausfahrender Landeklappe (animiert)
+beschreibung: Knopf „Landeklappe an“: die Spaltklappe fährt in 18 s um 25° aus, Auftrieb und Widerstand steigen wie im Landeanflug.
+quelle: Eigene Konstruktion für Windkanal 2D (Profile nach NACA-Formeln); Klappe dreht um einen Gelenkpunkt unter dem Flügel (vereinfachter Klappenmechanismus)
+lizenz: Teil dieses Projekts
+bezug: Sehnenlänge
+groesse: 40
+winkel: 5
+reynolds: 1000
+detail: 0.02
+drehpunkt: 0.25 0
+bewegung-name: Landeklappe
+bewegung-dauer: 18
+bewegung-tempo: 280
+bezug-meter: 4
+
+teil: Hauptflügel
+naca: 2413 160
+sehne: 0.78
+
+teil: Klappe
+naca: 4415 120
+sehne: 0.3
+lage: 0.62089 -0.03628
+bewegung: 0.62 -0.2 25

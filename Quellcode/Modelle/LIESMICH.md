@@ -24,6 +24,10 @@ detail: 0.02                         (feinstes Detail, z. B. engster Spalt, als 
 boden: ja                            (steht am Kanalboden statt mittig)
 bodenabstand: 0.05                   (Abstand zum Boden in Formgrößen; 0 = aufgesetzt; ohne Angabe 3 Zellen)
 drehpunkt: 0.25 0                    (um diesen Punkt wird gedreht; er liegt in der Kanalmitte)
+bewegung-name: DRS                   (Modelle mit beweglichen Teilen: Name für den Knopf im Strömungsbild)
+bewegung-dauer: 0.4                  (Dauer der Bewegung in Sekunden am echten Fahrzeug)
+bewegung-tempo: 300                  (Geschwindigkeit in km/h, für die die Dauer gilt)
+bezug-meter: 0.5                     (echte Bezugslänge in Metern; Dauer in Rechenschritten = gleich viele Überströmungen)
 
 teil: Hauptflügel                    (beliebig viele Teile; sie dürfen sich überdecken)
 profil: clarky                       (Profil aus Profile/clarky.dat)   oder
@@ -33,6 +37,7 @@ punkte:                              (danach Zeilen „x y“, „x y !“ = sch
 glatt: 6                             (Punkte als glatte Kurve verbinden, Unterteilungen je Abschnitt)
 sehne: 0.3   winkel: 25   lage: 0.69 -0.05   spiegeln: ja   dicke: 1
                                      (Profil skalieren, um die Vorderkante drehen, verschieben, umdrehen für Abtrieb)
+bewegung: 0.89 0.35 26.5             (bewegliches Teil: dreht sich um diesen Punkt um so viele Grad, Sinn wie „winkel“)
 ```
 
 Koordinaten: x nach rechts (Strömung kommt von links), y nach oben, Einheit = Formgröße.
@@ -142,10 +147,13 @@ für diese Datei. Für die App ist Python nicht nötig.
 | Frontflügel (4 Elemente) | `f1-frontfluegel.modell` | Elemente: Selig S1223 (UIUC-Datenbank, s1223.dat), umgedreht; Anordnung Eigene Konstruktion für Windkanal 2D nach typischen Maßen (Reglement 2022–2025) | Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen |
 | Heckflügel, DRS geschlossen | `f1-heckfluegel-zu.modell` | Selig S1223 umgedreht (UIUC-Datenbank); Anordnung Eigene Konstruktion für Windkanal 2D nach typischen Maßen | Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen |
 | Heckflügel, DRS offen | `f1-heckfluegel-offen.modell` | Selig S1223 umgedreht (UIUC-Datenbank); Schlitz 85 mm nach FIA-Reglement 2022–2025; Anordnung Eigene Konstruktion für Windkanal 2D | Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen |
+| Heckflügel mit DRS (animiert, 2025) | `f1-heckfluegel-drs.modell` | Selig S1223 umgedreht (UIUC-Datenbank); DRS-Schlitz offen 85 mm, Wechsel in weniger als 400 ms nach FIA-Reglement 2025 (Art. 3.10.10); Flap dreht um ihre Hinterkante; Anordnung Eigene Konstruktion für Windkanal 2D | Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen |
+| Heckflügel 2026 mit „Macarena“-Flap (animiert) | `f1-heckfluegel-macarena.modell` | Prinzip nach Berichten zum Ferrari SF-26 (Testfahrten Bahrain 2026); aktive Aerodynamik, Wechsel höchstens 400 ms nach FIA-Reglement 2026 (Art. 3.11.6); Drehpunkt in der Sehnenmitte und Flügelform angenommen (nicht veröffentlicht); Selig S1223 umgedreht (UIUC-Datenbank) | Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen |
 | Beam Wing (2 Elemente) | `f1-beamwing.modell` | Eppler E423 umgedreht (UIUC-Datenbank, e423.dat); Anordnung Eigene Konstruktion für Windkanal 2D | Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen |
 | Unterboden mit Venturi-Kanal und Diffusor | `f1-unterboden.modell` | Eigene Konstruktion für Windkanal 2D nach typischen Maßen (Kanal-Einlauf etwa 250 mm, Kehle etwa 35 mm über der Bahn, Diffusor 1 m lang) | Teil dieses Projekts |
 | Formel-1-Wagen komplett (DRS zu) | `f1-komplett.modell` | Eigene Konstruktion nach den öffentlichen Maßen des FIA-Reglements 2022–2025 (Radstand 3600 mm, Raddurchmesser 720 mm, Höhe bis 950 mm, DRS-Schlitz 85 mm); Flügelelemente Selig S1223 und Eppler E423 (UIUC-Datenbank). Kein bestimmtes Team-Fahrzeug | Teil dieses Projekts |
 | Formel-1-Wagen komplett (DRS offen) | `f1-komplett-drs.modell` | Eigene Konstruktion nach den öffentlichen Maßen des FIA-Reglements 2022–2025 (Radstand 3600 mm, Raddurchmesser 720 mm, Höhe bis 950 mm, DRS-Schlitz 85 mm); Flügelelemente Selig S1223 und Eppler E423 (UIUC-Datenbank). Kein bestimmtes Team-Fahrzeug | Teil dieses Projekts |
+| Formel-1-Wagen mit DRS (animiert) | `f1-komplett-drs-animiert.modell` | Eigene Konstruktion nach den öffentlichen Maßen des FIA-Reglements 2022–2025 (Radstand 3600 mm, Raddurchmesser 720 mm, Höhe bis 950 mm, DRS-Schlitz 85 mm); Flügelelemente Selig S1223 und Eppler E423 (UIUC-Datenbank). Kein bestimmtes Team-Fahrzeug; DRS-Wechsel in weniger als 400 ms (Reglement 2025, Art. 3.10.10) | Teil dieses Projekts |
 
 ### Straßenfahrzeuge
 

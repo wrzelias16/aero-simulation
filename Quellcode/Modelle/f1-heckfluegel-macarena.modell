@@ -1,0 +1,29 @@
+# Heckflügel 2026 mit „Macarena“-Flap (animiert)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Heckflügel 2026 mit „Macarena“-Flap (animiert)
+beschreibung: Ferrari 2026, Knopf „Geraden-Modus an“: die Flap dreht sich in 0,4 s um 180° nach hinten.
+quelle: Prinzip nach Berichten zum Ferrari SF-26 (Testfahrten Bahrain 2026); aktive Aerodynamik, Wechsel höchstens 400 ms nach FIA-Reglement 2026 (Art. 3.11.6); Drehpunkt in der Sehnenmitte und Flügelform angenommen (nicht veröffentlicht); Selig S1223 umgedreht (UIUC-Datenbank)
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Flügeltiefe
+groesse: 34
+winkel: 0
+reynolds: 1000
+detail: 0.02
+bewegung-name: Geraden-Modus
+bewegung-dauer: 0.4
+bewegung-tempo: 300
+bezug-meter: 0.5
+
+teil: Hauptblatt
+profil: s1223
+sehne: 0.6
+winkel: -6
+spiegeln: ja
+
+teil: Flap
+profil: s1223
+sehne: 0.42
+winkel: -38
+lage: 0.5619 0.09281
+spiegeln: ja
+bewegung: 0.72738 0.2221 180

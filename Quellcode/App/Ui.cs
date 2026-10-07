@@ -174,6 +174,35 @@ namespace Windkanal
         public static int ChipWidth(string text, bool dot = false) { return Width(text, SmallMed) + 20 + (dot ? 14 : 0); }
 
         /// <summary>Reihe aus Kapseln; <paramref name="filled"/> Anteil (0..1) in Farbe <paramref name="on"/>.</summary>
+        /// <summary>
+        /// Ladebalken: runde Spur, darin der gefüllte Teil; ein weicher heller Schimmer läuft durch den gefüllten Teil
+        /// (t = Zeit in Sekunden, zeigt, dass noch gearbeitet wird).
+        /// </summary>
+        public static void ProgressBar(Graphics g, RectangleF r, float value, Color fill, Color track, float t)
+        {
+            value = Math.Max(0, Math.Min(1, value));
+            float rad = r.Height / 2;
+            FillRound(g, track, r, rad);
+            if (value <= 0) return;
+            var f = new RectangleF(r.X, r.Y, Math.Max(r.Height, r.Width * value), r.Height);
+            FillRound(g, fill, f, rad);
+            if (value >= 1) return;
+            var state = g.Save();
+            using (var clip = Round(f, rad))
+            {
+                g.SetClip(clip);
+                float w = Math.Min(140, f.Width * 0.6f), x = f.X - w + (t * 260 % (f.Width + w));
+                using (var b = new LinearGradientBrush(new RectangleF(x, f.Y, w, f.Height), Color.FromArgb(0, Color.White), Color.FromArgb(90, Color.White), 0f))
+                {
+                    var blend = new ColorBlend { Colors = new[] { Color.FromArgb(0, Color.White), Color.FromArgb(90, Color.White), Color.FromArgb(0, Color.White) },
+                                                 Positions = new[] { 0f, 0.5f, 1f } };
+                    b.InterpolationColors = blend;
+                    g.FillRectangle(b, x, f.Y, w, f.Height);
+                }
+            }
+            g.Restore(state);
+        }
+
         public static void Capsules(Graphics g, RectangleF r, int n, float filled, Color on, Color off)
         {
             float gap = 4, w = (r.Width - gap * (n - 1)) / n;
@@ -318,7 +347,7 @@ namespace Windkanal
     /// <summary>Karte mit großen runden Ecken und Titel; Inhalte zeichnet der Besitzer über das Paint-Ereignis.</summary>
     sealed class Card : Panel
     {
-        public const int Radius = 20, Pad = 20, Head = 58;
+        public const int Radius = 12, Pad = 16, Head = 48;
         public string Title;
 
         public Card(string title)
@@ -339,8 +368,125 @@ namespace Windkanal
             Theme.FillRound(g, Theme.Card, r, Radius);
             Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, Radius);
             if (!string.IsNullOrEmpty(Title))
-                Theme.Draw(g, Title, Theme.Title, Theme.Text, new Rectangle(Pad, 18, Width - 2 * Pad, 24), TextFormatFlags.VerticalCenter);
+                Theme.Draw(g, Title, Theme.Title, Theme.Text, new Rectangle(Pad, 12, Width - 2 * Pad, 24), TextFormatFlags.VerticalCenter);
             base.OnPaint(e);
+        }
+    }
+
+    /// <summary>
+    /// Zeichnet eine scrollende Karte nach jedem Bildlauf neu. Ohne das bleiben beim Scrollen mit dem Mausrad
+    /// Reste von Rahmen und Ecken stehen (das Rad löst kein Scroll-Ereignis aus).
+    /// </summary>
+    sealed class ScrollRepaint : NativeWindow
+    {
+        readonly Control target;
+
+        ScrollRepaint(Control c)
+        {
+            target = c;
+            AssignHandle(c.Handle);
+            c.HandleDestroyed += delegate { ReleaseHandle(); };
+        }
+
+        public static void Attach(Control c)
+        {
+            if (c.IsHandleCreated) new ScrollRepaint(c);
+            else c.HandleCreated += delegate { new ScrollRepaint(c); };
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            // WM_HSCROLL, WM_VSCROLL, WM_MOUSEWHEEL
+            if (m.Msg == 0x114 || m.Msg == 0x115 || m.Msg == 0x20A) target.Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// Weiches Überblenden bei großen Wechseln (2D ↔ 3D, hell ↔ dunkel): Das bisherige Fensterbild liegt kurz als Foto
+    /// über allem und wird ausgeblendet, darunter steht schon der neue Zustand. Ohne Windows-Animationen sofort.
+    /// </summary>
+    static class Transition
+    {
+        /// <param name="window">Fenster, dessen Bild überblendet wird</param>
+        /// <param name="change">der eigentliche Wechsel (Farben anwenden, anderes Fenster zeigen …)</param>
+        /// <param name="shown">Fenster, das danach zu sehen ist (wird vor dem Ausblenden fertig gezeichnet)</param>
+        public static void CrossFade(Form window, Action change, Form shown = null, int ms = 240)
+        {
+            if (!SystemInformation.UIEffectsEnabled || !window.Visible || window.WindowState == FormWindowState.Minimized)
+            {
+                change();
+                return;
+            }
+            Rectangle b = window.Bounds;
+            Bitmap shot;
+            try
+            {
+                shot = new Bitmap(b.Width, b.Height);
+                using (var g = Graphics.FromImage(shot)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
+            }
+            catch { change(); return; }
+            var cover = new Cover(shot) { Bounds = b };
+            cover.Show();
+            cover.Update();
+            change();
+            var target = shown ?? window;
+            target.Update();
+            cover.BringToFront();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var timer = new Timer { Interval = 10 };
+            timer.Tick += delegate
+            {
+                double t = Math.Min(1, clock.Elapsed.TotalMilliseconds / ms);
+                double e = 1 - Math.Pow(1 - t, 3);   // schnell los, weich aus
+                if (t >= 1)
+                {
+                    timer.Stop(); timer.Dispose();
+                    cover.Close(); cover.Dispose(); shot.Dispose();
+                    if (!target.IsDisposed && target.Visible) target.Activate();
+                    return;
+                }
+                cover.Opacity = 1 - e;
+            };
+            timer.Start();
+        }
+
+        sealed class Cover : Form
+        {
+            readonly Bitmap img;
+
+            public Cover(Bitmap image)
+            {
+                img = image;
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                ShowInTaskbar = false;
+                TopMost = true;
+                DoubleBuffered = true;
+                Opacity = 1;
+            }
+
+            protected override bool ShowWithoutActivation { get { return true; } }
+
+            protected override void OnPaintBackground(PaintEventArgs e) { }
+
+            protected override void OnPaint(PaintEventArgs e) { e.Graphics.DrawImageUnscaled(img, 0, 0); }
+        }
+    }
+
+    /// <summary>
+    /// Scrollbereich in einer Karte: Titel und Rahmen der Karte bleiben stehen, nur der Inhalt darunter scrollt.
+    /// </summary>
+    sealed class ScrollPanel : Panel
+    {
+        public ScrollPanel()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            AutoScroll = true;
+            AutoScrollMargin = new Size(0, 12);
+            BackColor = Theme.Card;
+            ScrollRepaint.Attach(this);
+            HandleCreated += delegate { Theme.ThemeScrollbars(Handle); };
         }
     }
 
@@ -377,9 +523,8 @@ namespace Windkanal
             }
             if (Pressed) fill = Theme.Mix(fill, Theme.Muted, 0.2f);
             if (!Enabled) { fill = Theme.Ctl; fg = Theme.Faint; }
-            if (!Primary) Theme.SoftShadow(g, RectangleF.Inflate(r, -3, -3), Height / 2f);
-            Theme.FillRound(g, fill, r, Height / 2f);
-            if (!Primary) Theme.StrokeRound(g, Theme.Border, r, Height / 2f);
+            Theme.FillRound(g, fill, r, 9);
+            if (!Primary) Theme.StrokeRound(g, Theme.Border, r, 9);
 
             bool icon = Icon != null && Theme.Icons != null;
             int tw = Text.Length > 0 ? Theme.Width(Text, Font) : 0;
@@ -465,18 +610,17 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Theme.Dark ? Theme.Card : Color.FromArgb(240, 242, 245), r, Height / 2f);
-            Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, Height / 2f);
+            Theme.FillRound(g, Theme.Dark ? Theme.Card : Color.FromArgb(240, 242, 245), r, 10);
+            Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, 10);
             for (int i = 0; i < Items.Count; i++)
             {
                 var ir = ItemRect(i);
                 if (i == sel)
                 {
-                    Theme.SoftShadow(g, RectangleF.Inflate(ir, -3, -3), ir.Height / 2);
-                    Theme.FillRound(g, Theme.Dark ? Theme.CtlHover : Theme.Surface, ir, ir.Height / 2);
+                    Theme.FillRound(g, Theme.Dark ? Theme.CtlHover : Theme.Surface, ir, 7);
                 }
                 else if (i == hot)
-                    Theme.FillRound(g, Theme.Dark ? Theme.Surface : Theme.CtlHover, ir, ir.Height / 2);
+                    Theme.FillRound(g, Theme.Dark ? Theme.Surface : Theme.CtlHover, ir, 7);
                 Theme.Draw(g, Items[i], Font, i == sel ? Theme.Text : Theme.Muted, Rectangle.Round(ir),
                            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
@@ -676,8 +820,8 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 12);
-            Theme.StrokeRound(g, Theme.Border, r, 12);
+            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 8);
+            Theme.StrokeRound(g, Theme.Border, r, 8);
             string s = sel >= 0 && sel < Items.Count ? Items[sel] : "";
             Theme.Draw(g, s, Font, Theme.Text, new Rectangle(14, 0, Width - 44, Height - 1), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             float cx = Width - 20, cy = Height / 2f;
@@ -783,8 +927,8 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 12);
-            Theme.StrokeRound(g, Theme.Border, r, 12);
+            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 8);
+            Theme.StrokeRound(g, Theme.Border, r, 8);
             if (sel != null)
             {
                 Theme.Draw(g, sel.Category, Theme.Small, Theme.Muted, new Rectangle(14, 6, Width - 44, 16), TextFormatFlags.EndEllipsis);
@@ -940,9 +1084,9 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Theme.Surface, r, 12);
+            Theme.FillRound(g, Theme.Surface, r, 8);
             Color border = !valid ? Theme.Pink : box.Focused ? Theme.Accent : Theme.Border;
-            Theme.StrokeRound(g, border, r, 12);
+            Theme.StrokeRound(g, border, r, 8);
             Theme.Draw(g, Unit, Font, Theme.Muted, new Rectangle(0, 0, Width - 14, Height - 1), TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             Theme.Draw(g, Caption, Font, Theme.Muted, new Rectangle(14, 0, Width - 28, Height - 1), TextFormatFlags.VerticalCenter);
         }
@@ -962,8 +1106,10 @@ namespace Windkanal
         {
             var g = e.Graphics;
             g.Clear(BackColor);
-            Theme.Draw(g, Text, Theme.SmallMed, Theme.Muted, new Rectangle(0, 0, Width, Height), TextFormatFlags.VerticalCenter);
-            int tw = Theme.Width(Text, Theme.SmallMed);
+            // Abschnittstitel in Großbuchstaben, wie in technischen Programmen
+            string t = Text.ToUpper(CultureInfo.GetCultureInfo("de-DE"));
+            Theme.Draw(g, t, Theme.SmallMed, Theme.Muted, new Rectangle(0, 0, Width, Height), TextFormatFlags.VerticalCenter);
+            int tw = Theme.Width(t, Theme.SmallMed);
             using (var p = new Pen(Theme.Border)) g.DrawLine(p, tw + 10, Height / 2, Width, Height / 2);
         }
     }
