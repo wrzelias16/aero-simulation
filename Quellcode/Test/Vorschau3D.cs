@@ -129,13 +129,53 @@ static class Vorschau3D
         f2.Location = new Point(-4000, -4000);
         f2.ShowInTaskbar = false;
         f2.ClientSize = new Size(1600, 960);
+        // danach: Heckflügel mit DRS, vor dem Öffnen, während und nach dem Öffnen
+        int step2 = 0;
         var t2 = new Timer { Interval = 2500 };
-        t2.Tick += delegate { t2.Stop(); Save(f2, Path.Combine(dir, "fenster_2d.png")); f2.Close(); };
+        t2.Tick += delegate
+        {
+            switch (step2++)
+            {
+                case 0:
+                    Save(f2, Path.Combine(dir, "fenster_2d.png"));
+                    Find<Windkanal.ModelPicker>(f2).Selected = Windkanal.ModelLibrary.Find("f1-heckfluegel-drs");
+                    t2.Interval = 6000;
+                    break;
+                case 1:
+                    Save(f2, Path.Combine(dir, "fenster_2d_drs_zu.png"));
+                    foreach (var b in All<Windkanal.FlatButton>(f2))
+                        if (b.Text.StartsWith("DRS"))
+                            typeof(Control).GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                                           .Invoke(b, new object[] { EventArgs.Empty });
+                    t2.Interval = 1200;
+                    break;
+                case 2:
+                    Save(f2, Path.Combine(dir, "fenster_2d_drs_halb.png"));
+                    t2.Interval = 7000;
+                    break;
+                default:
+                    t2.Stop();
+                    Save(f2, Path.Combine(dir, "fenster_2d_drs_offen.png"));
+                    f2.Close();
+                    break;
+            }
+        };
         f2.Shown += delegate { t2.Start(); };
         Application.Run(f2);
 
         Console.WriteLine(fails == 0 ? "ALLE TESTS BESTANDEN" : fails + " TEST(S) DURCHGEFALLEN");
         return fails == 0 ? 0 : 1;
+    }
+
+    static System.Collections.Generic.List<T> All<T>(Control c) where T : Control
+    {
+        var r = new System.Collections.Generic.List<T>();
+        foreach (Control k in c.Controls)
+        {
+            if (k is T) r.Add((T)k);
+            r.AddRange(All<T>(k));
+        }
+        return r;
     }
 
     static T Find<T>(Control c) where T : Control

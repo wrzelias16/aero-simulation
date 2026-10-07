@@ -38,6 +38,11 @@ namespace Windkanal
         Card cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir;
         Canvas view;
         Segmented segView, segMode;
+        // Bewegliche Teile (DRS, Macarena): Stand 0 = Ausgangslage, 1 = Ende; Richtung +1 öffnet, -1 schließt
+        FlatButton btnMotion;
+        float motion;
+        int motionDir;
+        Model motionModel;
         /// <summary>Wird ausgelöst, wenn im Kopf "3D" gewählt wird.</summary>
         public event EventHandler SwitchTo3D;
         DropDown cbRes;
@@ -163,6 +168,10 @@ namespace Windkanal
             chkSmoke.CheckedChanged += delegate { showSmoke = chkSmoke.Checked; particles.Clear(); dirty = true; };
             cardView.Controls.Add(view);
             cardView.Controls.Add(chkSmoke);
+            btnMotion = new FlatButton { Primary = true, BackColor = Theme.Card, Visible = false };
+            btnMotion.Click += delegate { ToggleMotion(); };
+            tips.SetToolTip(btnMotion, "Bewegliches Teil auf- bzw. zufahren (Taste D)");
+            cardView.Controls.Add(btnMotion);
 
             // --- Messwerte und Verlauf
             cardCd = new Card("Widerstand");
@@ -288,6 +297,8 @@ namespace Windkanal
             cardView.SetBounds(Outer, TopH, lw, by - Gap - TopH);
             view.SetBounds(12, Card.Head, cardView.Width - 24, cardView.Height - Card.Head - 46);
             chkSmoke.SetBounds(cardView.Width - Card.Pad - 140, 16, 140, 28);
+            int mw2 = Math.Max(150, Theme.Width(btnMotion.Text, btnMotion.Font) + 40);
+            btnMotion.SetBounds(chkSmoke.Left - 14 - mw2, 12, mw2, 36);
 
             int cw = 196, kw = 236;
             cardCd.SetBounds(Outer, by, cw, BottomH);
@@ -440,6 +451,12 @@ namespace Windkanal
                 e.Handled = true;
                 e.SuppressKeyPress = true;
             }
+            else if (e.KeyCode == Keys.D && !(ActiveControl is TextBox) && model != null && model.HasMotion)
+            {
+                ToggleMotion();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
         }
 
         void SetRunning(bool r)
@@ -477,6 +494,12 @@ namespace Windkanal
 
         void RebuildGeometry(bool resetFlow)
         {
+            if (model != motionModel)
+            {
+                motionModel = model;
+                motion = 0; motionDir = 0;
+                UpdateMotionButton();
+            }
             int nx = solver.NX, ny = solver.NY;
             var mask = new bool[nx * ny];
             float sizeCells = sizePercent / 100f * ny;
@@ -488,7 +511,7 @@ namespace Windkanal
             {
                 // Fahrzeuge und Bauwerke stehen am (reibungsfreien = mitbewegten) Boden, alles andere mittig im Kanal
                 float px = (model.OnGround ? 0.3f : 0.25f) * solver.VisibleNX;
-                mask = ModelLibrary.Rasterize(model, nx, ny, px, sizeCells, angleDeg);
+                mask = ModelLibrary.Rasterize(model, nx, ny, px, sizeCells, angleDeg, motion);
             }
 
             int rows = 0;
@@ -508,6 +531,60 @@ namespace Windkanal
             }
             stats.Clear();
             dirty = true;
+        }
+
+        // ------------------------------------------------------------ bewegliche Teile
+
+        void ToggleMotion()
+        {
+            if (model == null || !model.HasMotion) return;
+            // Richtung umkehren; aus der Ruhe heraus: offen -> zu, sonst zu -> offen
+            motionDir = motionDir != 0 ? -motionDir : (motion >= 1 ? -1 : 1);
+            UpdateMotionButton();
+        }
+
+        void UpdateMotionButton()
+        {
+            if (btnMotion == null) return;
+            bool has = model != null && model.HasMotion && !model.IsCustom;
+            btnMotion.Visible = has;
+            if (!has) return;
+            string n = model.MotionName;
+            bool openNext = motionDir == 0 ? motion < 1 : motionDir < 0;
+            btnMotion.Text = n == "DRS" ? (openNext ? "DRS öffnen" : "DRS schließen") : (openNext ? n + " an" : n + " aus");
+            btnMotion.Invalidate();
+            if (cardView != null) LayoutAll();
+        }
+
+        /// <summary>
+        /// Bewegung um 'steps' Rechenschritte weiterführen. Die Dauer entspricht gleich vielen Überströmungen
+        /// der Bezugslänge wie am echten Auto (z. B. 0,4 s bei 300 km/h und 0,5 m Flügeltiefe).
+        /// </summary>
+        void AdvanceMotion(int steps)
+        {
+            if (motionDir == 0 || model == null || !model.HasMotion) return;
+            double total = model.MotionConvective * refLen / solver.U0;
+            float before = motion;
+            motion = (float)Math.Max(0, Math.Min(1, motion + motionDir * steps / Math.Max(1.0, total)));
+            if (motion <= 0 || motion >= 1) { motionDir = 0; UpdateMotionButton(); }
+            if (motion != before) ApplyMotionMask();
+        }
+
+        /// <summary>Nur die Form neu rastern; Strömung, Messreihe und Rechenparameter bleiben (sonst sähe man den Übergang nicht).</summary>
+        void ApplyMotionMask()
+        {
+            int nx = solver.NX, ny = solver.NY;
+            float sizeCells = sizePercent / 100f * ny;
+            float px = (model.OnGround ? 0.3f : 0.25f) * solver.VisibleNX;
+            solver.ApplyMask(ModelLibrary.Rasterize(model, nx, ny, px, sizeCells, angleDeg, motion));
+            dirty = true;
+        }
+
+        /// <summary>Stand als Zeit im echten Maßstab (Sekunden bei der Modellgeschwindigkeit).</summary>
+        string MotionText()
+        {
+            double t = motion * model.MotionSeconds;
+            return model.MotionName + " " + F(motion * 100, "0") + " %  ·  " + F(t, "0.00") + " s von " + F(model.MotionSeconds, "0.00") + " s";
         }
 
         void UpdateFlowParams()
@@ -558,6 +635,7 @@ namespace Windkanal
                     warningUntil = now + 9000;
                     return;
                 }
+                AdvanceMotion(steps);
                 solver.AdvectSmoke(steps);
                 if (showSmoke && viewMode != ViewMode.Rauch) particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
                 dirty = true;
@@ -686,7 +764,12 @@ namespace Windkanal
                 Color c = running ? Theme.Green : Theme.Orange;
                 x += Theme.Chip(g, running ? "Läuft" : "Pausiert", x, 18, c, Theme.Tint(c), 24, true) + 6;
                 x += Theme.Chip(g, solver.Backend, x, 18, Theme.Muted, Theme.Ctl) + 6;
-                if (running && mlups > 0)
+                if (model != null && model.HasMotion && !model.IsCustom && (motionDir != 0 || motion > 0))
+                {
+                    Color mc = motionDir != 0 ? Theme.Accent : Theme.Muted;
+                    x += Theme.Chip(g, MotionText(), x, 18, mc, Theme.Tint(mc)) + 6;
+                }
+                else if (running && mlups > 0)
                     Theme.Chip(g, F(mlups, "#,0") + " MLUPS  ·  " + F(fps, "0") + " FPS", x, 18, Theme.Muted, Theme.Ctl);
             }
 

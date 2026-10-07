@@ -29,6 +29,10 @@ detail: 0.02                         (feinstes Detail, z. B. engster Spalt, als 
 boden: ja                            (steht am Kanalboden statt mittig)
 bodenabstand: 0.05                   (Abstand zum Boden in Formgrößen; 0 = aufgesetzt; ohne Angabe 3 Zellen)
 drehpunkt: 0.25 0                    (um diesen Punkt wird gedreht; er liegt in der Kanalmitte)
+bewegung-name: DRS                   (Modelle mit beweglichen Teilen: Name für den Knopf im Strömungsbild)
+bewegung-dauer: 0.4                  (Dauer der Bewegung in Sekunden am echten Fahrzeug)
+bewegung-tempo: 300                  (Geschwindigkeit in km/h, für die die Dauer gilt)
+bezug-meter: 0.5                     (echte Bezugslänge in Metern; Dauer in Rechenschritten = gleich viele Überströmungen)
 
 teil: Hauptflügel                    (beliebig viele Teile; sie dürfen sich überdecken)
 profil: clarky                       (Profil aus Profile/clarky.dat)   oder
@@ -38,6 +42,7 @@ punkte:                              (danach Zeilen „x y“, „x y !“ = sch
 glatt: 6                             (Punkte als glatte Kurve verbinden, Unterteilungen je Abschnitt)
 sehne: 0.3   winkel: 25   lage: 0.69 -0.05   spiegeln: ja   dicke: 1
                                      (Profil skalieren, um die Vorderkante drehen, verschieben, umdrehen für Abtrieb)
+bewegung: 0.89 0.35 26.5             (bewegliches Teil: dreht sich um diesen Punkt um so viele Grad, Sinn wie „winkel“)
 ```
 
 Koordinaten: x nach rechts (Strömung kommt von links), y nach oben, Einheit = Formgröße.

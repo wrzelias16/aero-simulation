@@ -1,0 +1,29 @@
+# Heckflügel mit DRS (animiert, 2025)
+# erzeugt mit Werkzeug/modelle_erzeugen.py
+name: Heckflügel mit DRS (animiert, 2025)
+beschreibung: Knopf „DRS öffnen“ oder Taste D: die Flap öffnet in 0,4 s (bei 300 km/h) bis zum 85-mm-Schlitz.
+quelle: Selig S1223 umgedreht (UIUC-Datenbank); DRS-Schlitz offen 85 mm, Wechsel in weniger als 400 ms nach FIA-Reglement 2025 (Art. 3.10.10); Flap dreht um ihre Hinterkante; Anordnung Eigene Konstruktion für Windkanal 2D
+lizenz: Koordinaten frei abrufbar, ohne ausdrückliche Lizenz; Profilkoordinaten sind veröffentlichte Messgrößen
+bezug: Flügeltiefe
+groesse: 34
+winkel: 0
+reynolds: 1000
+detail: 0.02
+bewegung-name: DRS
+bewegung-dauer: 0.4
+bewegung-tempo: 300
+bezug-meter: 0.5
+
+teil: Hauptblatt
+profil: s1223
+sehne: 0.6
+winkel: -6
+spiegeln: ja
+
+teil: Flap
+profil: s1223
+sehne: 0.42
+winkel: -38
+lage: 0.5619 0.09281
+spiegeln: ja
+bewegung: 0.89286 0.35139 26.46871

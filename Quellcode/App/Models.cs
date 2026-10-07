@@ -24,6 +24,15 @@ namespace Windkanal
         /// <summary>„Eigene Zeichnung“: keine Teile, die Maske kommt vom Zeichnen mit der Maus.</summary>
         public bool IsCustom;
         public readonly List<ModelPart> Parts = new List<ModelPart>();
+
+        // Bewegliche Teile (z. B. DRS): Name der Bewegung, Dauer in Sekunden bei 'MotionKmh', echte Bezugslänge in Metern.
+        // Die Dauer wird über gleich viele Überströmungen der Bezugslänge in Rechenschritte umgerechnet.
+        public string MotionName = "Bewegung";
+        public float MotionSeconds = 0.4f, MotionKmh = 300, RefMeters = 1;
+        public bool HasMotion { get { foreach (var p in Parts) if (p.Moves) return true; return false; } }
+
+        /// <summary>Dauer der Bewegung in Überströmungen der Bezugslänge (t · U / L).</summary>
+        public double MotionConvective { get { return MotionSeconds * (MotionKmh / 3.6) / Math.Max(1e-3, RefMeters); } }
     }
 
     public sealed class ModelPart
@@ -32,6 +41,24 @@ namespace Windkanal
         public List<PointF> Points = new List<PointF>();
         /// <summary>Feine Teile werden mit <see cref="Shapes.FillFine"/> gerastert (Umriss zählt mit).</summary>
         public bool Fine = true;
+        /// <summary>Teil dreht sich um (MoveX, MoveY) um MoveDeg Grad (Sinn wie „winkel“: positiv = im Uhrzeigersinn).</summary>
+        public bool Moves;
+        public float MoveX, MoveY, MoveDeg;
+
+        /// <summary>Punkte bei Bewegungsstand t (0 = Ausgangslage, 1 = Ende).</summary>
+        public List<PointF> PointsAt(float t)
+        {
+            if (!Moves || t <= 0) return Points;
+            double a = MoveDeg * Math.Min(1, t) * Math.PI / 180;
+            float ca = (float)Math.Cos(a), sa = (float)Math.Sin(a);
+            var r = new List<PointF>(Points.Count);
+            foreach (var q in Points)
+            {
+                float dx = q.X - MoveX, dy = q.Y - MoveY;
+                r.Add(new PointF(MoveX + dx * ca + dy * sa, MoveY - dx * sa + dy * ca));
+            }
+            return r;
+        }
     }
 
     /// <summary>
@@ -199,6 +226,10 @@ namespace Windkanal
                         case "detail": m.Detail = Num(val); break;
                         case "bodenabstand": m.GroundGap = Num(val); break;
                         case "drehpunkt": { var v = Nums(val, 2); pivotX = v[0]; pivotY = v[1]; } break;
+                        case "bewegung-name": m.MotionName = val; break;
+                        case "bewegung-dauer": m.MotionSeconds = Num(val); break;
+                        case "bewegung-tempo": m.MotionKmh = Num(val); break;
+                        case "bezug-meter": m.RefMeters = Num(val); break;
                         default: throw new FormatException("unbekannter Schlüssel „" + key + "“");
                     }
                 }
@@ -213,7 +244,10 @@ namespace Windkanal
             if (m.Name.Length == 0) m.Name = id;
             if (m.Parts.Count == 0) { errors.Add(id + ".modell: keine Teile"); return null; }
             foreach (var p in m.Parts)
+            {
                 for (int i = 0; i < p.Points.Count; i++) p.Points[i] = new PointF(p.Points[i].X - pivotX, p.Points[i].Y - pivotY);
+                p.MoveX -= pivotX; p.MoveY -= pivotY;
+            }
             return m;
         }
 
@@ -229,15 +263,18 @@ namespace Windkanal
         /// Rastert das Modell aufs Gitter: Drehpunkt bei (pivotX, Kanalmitte), Formgröße in Zellen, Anstellwinkel in Grad.
         /// Bodenmodelle werden senkrecht so verschoben, dass ihr tiefster Punkt den gewünschten Bodenabstand hat.
         /// </summary>
-        public static bool[] Rasterize(Model m, int nx, int ny, float pivotX, float sizeCells, float angleDeg)
+        /// <param name="motion">Stand der Bewegung beweglicher Teile, 0 = Ausgangslage (wie in der Datei), 1 = Ende</param>
+        public static bool[] Rasterize(Model m, int nx, int ny, float pivotX, float sizeCells, float angleDeg, float motion = 0)
         {
             var mask = new bool[nx * ny];
             var parts = new List<PointF[]>(m.Parts.Count);
-            foreach (var p in m.Parts) parts.Add(Shapes.Transform(p.Points, sizeCells, angleDeg, pivotX, (ny - 1) / 2f));
+            foreach (var p in m.Parts) parts.Add(Shapes.Transform(p.PointsAt(motion), sizeCells, angleDeg, pivotX, (ny - 1) / 2f));
             if (m.OnGround)
             {
+                // Bodenabstand nach der Ausgangslage, damit sich das Auto beim Öffnen der Klappe nicht hebt oder senkt
                 float minY = float.MaxValue;
-                foreach (var pts in parts) foreach (var q in pts) minY = Math.Min(minY, q.Y);
+                foreach (var p in m.Parts)
+                    foreach (var q in Shapes.Transform(p.Points, sizeCells, angleDeg, pivotX, (ny - 1) / 2f)) minY = Math.Min(minY, q.Y);
                 // 0 = aufgesetzt (unterste Zellreihe gehört zum Körper), sonst Abstand, mindestens 1 Zelle, ohne Angabe 3 Zellen
                 float target = m.GroundGap < 0 ? 3f : m.GroundGap == 0 ? -0.5f : Math.Max(1f, m.GroundGap * sizeCells);
                 float shift = target - minY;
@@ -279,6 +316,8 @@ namespace Windkanal
             int smooth;
             float chord = 1, thick = 1, angle, x, y;
             bool mirror, reverse;
+            bool moves;
+            float mx, my, mdeg;
 
             public void AddPointLine(string line)
             {
@@ -319,6 +358,7 @@ namespace Windkanal
                     case "lage": { var v = Nums(val, 2); x = v[0]; y = v[1]; } break;
                     case "spiegeln": mirror = Bool(val); break;
                     case "umkehren": reverse = Bool(val); break;
+                    case "bewegung": { var v = Nums(val, 3); moves = true; mx = v[0]; my = v[1]; mdeg = v[2]; } break;
                     default: throw new FormatException("unbekannter Schlüssel „" + key + "“ in Teil „" + Name + "“");
                 }
             }
@@ -337,7 +377,7 @@ namespace Windkanal
                     if (reverse) px = chord - px;
                     r.Add(new PointF(x + px * ca + py * sa, y - px * sa + py * ca));
                 }
-                return new ModelPart { Name = Name, Points = r, Fine = !primitive };
+                return new ModelPart { Name = Name, Points = r, Fine = !primitive, Moves = moves, MoveX = mx, MoveY = my, MoveDeg = mdeg };
             }
         }
 
