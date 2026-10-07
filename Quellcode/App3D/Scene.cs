@@ -22,6 +22,17 @@ namespace Windkanal3D
         /// <summary>Schnittebene: -1 = keine, 0 = Seitenschnitt (y = SliceIndex), 1 = Draufsicht (z = SliceIndex).</summary>
         public int SliceAxis = -1, SliceIndex;
 
+        /// <summary>Stromlinien: je Linie x, y, z, Geschwindigkeit/uIn je Punkt. Farbe aus Lut (0 … 1,5·U).</summary>
+        public System.Collections.Generic.List<float[]> Lines;
+        public int[] Lut;
+        /// <summary>Rauchteilchen (x, y, z je Teilchen).</summary>
+        public float[] SmokeP;
+        public int SmokeCount;
+        public Color SmokeColor = Color.FromArgb(238, 241, 245);
+        /// <summary>Schnittebene als farbige Fläche im Raum (Werte = Geschwindigkeit/uIn, feste Zellen = -1).</summary>
+        public float[] SliceData;
+        public bool ShowSlicePlane;
+
         public Color Background = Color.FromArgb(23, 25, 28), Body = Color.FromArgb(206, 211, 219),
                      Frame = Color.FromArgb(102, 108, 117), Floor = Color.FromArgb(44, 47, 53), SliceColor = Color.FromArgb(98, 128, 255);
 
@@ -47,7 +58,10 @@ namespace Windkanal3D
             SetupCamera();
             DrawFloor();
             if (Triangles != null) DrawMesh(Triangles);
+            if (ShowSlicePlane && SliceData != null && Lut != null) DrawSlicePlane();
+            if (Lines != null && Lut != null) foreach (var l in Lines) PolyLine(l);
             DrawFrame();
+            if (SmokeP != null && SmokeCount > 0) DrawSmoke();
             if (SliceAxis >= 0) DrawSlice();
 
             var bmp = new Bitmap(w, h, PixelFormat.Format32bppRgb);
@@ -228,6 +242,111 @@ namespace Windkanal3D
                         int p = py * sw + px;
                         if (iz >= depth[p]) color[p] = c;
                     }
+            }
+        }
+
+        int LutColor(float v) { return Lut[Math.Max(0, Math.Min(255, (int)(v / 1.5f * 255)))]; }
+
+        void PolyLine(float[] l)
+        {
+            int n = l.Length / 4;
+            float px = 0, py = 0, pz = 0;
+            bool prev = false;
+            for (int i = 0; i < n; i++)
+            {
+                float x, y, iz;
+                bool ok = Project(l[4 * i], l[4 * i + 1], l[4 * i + 2], out x, out y, out iz);
+                if (ok && prev) Segment(px, py, pz, x, y, iz, LutColor(l[4 * i + 3]), 1.3f * ss);
+                px = x; py = y; pz = iz; prev = ok;
+            }
+        }
+
+        void DrawSmoke()
+        {
+            int sr = SmokeColor.R, sg = SmokeColor.G, sb = SmokeColor.B;
+            int rad = Math.Max(1, ss);
+            for (int i = 0; i < SmokeCount; i++)
+            {
+                float x, y, iz;
+                if (!Project(SmokeP[3 * i], SmokeP[3 * i + 1], SmokeP[3 * i + 2], out x, out y, out iz)) continue;
+                int cxp = (int)x, cyp = (int)y;
+                for (int j = 0; j < rad; j++)
+                    for (int k = 0; k < rad; k++)
+                    {
+                        int qx = cxp + k, qy = cyp + j;
+                        if (qx < 0 || qy < 0 || qx >= sw || qy >= sh) continue;
+                        int p = qy * sw + qx;
+                        if (iz < depth[p] * 0.999f) continue;   // hinter dem Körper
+                        int c = color[p];
+                        // weich aufhellen wie Rauch: 40 % Richtung Rauchfarbe
+                        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+                        r += (sr - r) * 2 / 5; g += (sg - g) * 2 / 5; b += (sb - b) * 2 / 5;
+                        color[p] = (255 << 24) | (r << 16) | (g << 8) | b;
+                    }
+            }
+        }
+
+        /// <summary>Schnittebene als Fläche mit Farben im Raum, leicht durchsichtig; feste Zellen bleiben frei.</summary>
+        void DrawSlicePlane()
+        {
+            double X = NX, Y = NY, Z = NZ;
+            double[][] q;
+            int tw = NX, th = SliceAxis == 0 ? NZ : NY;
+            if (SliceData.Length != tw * th) return;
+            if (SliceAxis == 0) { double y = SliceIndex + 0.5; q = new[] { new[] { 0, y, 0 }, new[] { X, y, 0 }, new[] { X, y, Z }, new[] { 0, y, Z } }; }
+            else { double z = SliceIndex + 0.5; q = new[] { new[] { 0, 0, z }, new[] { X, 0, z }, new[] { X, Y, z }, new[] { 0, Y, z } }; }
+            var uv = new[] { new[] { 0f, 0f }, new[] { 1f, 0f }, new[] { 1f, 1f }, new[] { 0f, 1f } };
+            var s = new float[12];
+            for (int k = 0; k < 4; k++)
+                if (!Project(q[k][0], q[k][1], q[k][2], out s[3 * k], out s[3 * k + 1], out s[3 * k + 2])) return;
+            int bands = Math.Max(1, Math.Min(64, Environment.ProcessorCount * 2));
+            Parallel.For(0, bands, b =>
+            {
+                int y0 = sh * b / bands, y1 = sh * (b + 1) / bands;
+                TexTri(s, uv, 0, 1, 2, tw, th, y0, y1);
+                TexTri(s, uv, 0, 2, 3, tw, th, y0, y1);
+            });
+        }
+
+        void TexTri(float[] s, float[][] uv, int ia, int ib, int ic, int tw, int th, int y0, int y1)
+        {
+            float ax = s[3 * ia], ay = s[3 * ia + 1], az = s[3 * ia + 2];
+            float bx = s[3 * ib], by = s[3 * ib + 1], bz = s[3 * ib + 2];
+            float qx = s[3 * ic], qy = s[3 * ic + 1], qz = s[3 * ic + 2];
+            float area = (bx - ax) * (qy - ay) - (qx - ax) * (by - ay);
+            if (Math.Abs(area) < 1e-6f) return;
+            float inv = 1f / area;
+            int ya = Math.Max(y0, (int)Math.Ceiling(Math.Min(ay, Math.Min(by, qy)) - 0.5f));
+            int yb = Math.Min(y1 - 1, (int)Math.Floor(Math.Max(ay, Math.Max(by, qy)) - 0.5f));
+            int xa = Math.Max(0, (int)Math.Ceiling(Math.Min(ax, Math.Min(bx, qx)) - 0.5f));
+            int xb = Math.Min(sw - 1, (int)Math.Floor(Math.Max(ax, Math.Max(bx, qx)) - 0.5f));
+            for (int y = ya; y <= yb; y++)
+            {
+                float py = y + 0.5f;
+                for (int x = xa; x <= xb; x++)
+                {
+                    float px = x + 0.5f;
+                    float w0 = ((bx - px) * (qy - py) - (qx - px) * (by - py)) * inv;
+                    float w1 = ((qx - px) * (ay - py) - (ax - px) * (qy - py)) * inv;
+                    float w2 = 1 - w0 - w1;
+                    if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                    float iz = w0 * az + w1 * bz + w2 * qz;
+                    int p = y * sw + x;
+                    if (iz <= depth[p]) continue;
+                    // perspektivisch richtig: Texturkoordinaten mit 1/z gewichten
+                    float u = (w0 * uv[ia][0] * az + w1 * uv[ib][0] * bz + w2 * uv[ic][0] * qz) / iz;
+                    float v = (w0 * uv[ia][1] * az + w1 * uv[ib][1] * bz + w2 * uv[ic][1] * qz) / iz;
+                    int tx = Math.Min(tw - 1, Math.Max(0, (int)(u * tw))), ty = Math.Min(th - 1, Math.Max(0, (int)(v * th)));
+                    float val = SliceData[ty * tw + tx];
+                    if (val < 0) continue;   // im Körper
+                    int c = LutColor(val), o = color[p];
+                    // 85 % deckend
+                    int r = (((c >> 16) & 255) * 85 + ((o >> 16) & 255) * 15) / 100;
+                    int g = (((c >> 8) & 255) * 85 + ((o >> 8) & 255) * 15) / 100;
+                    int bl = ((c & 255) * 85 + (o & 255) * 15) / 100;
+                    color[p] = (255 << 24) | (r << 16) | (g << 8) | bl;
+                    depth[p] = iz;
+                }
             }
         }
 

@@ -16,6 +16,8 @@ namespace Windkanal3D
     {
         public readonly float[] V;
         public readonly string Name;
+        /// <summary>Grundausrichtung (Zeilen = Windkanal-Achsen x, y, z in Modell-Achsen), nur Vielfache von 90°.</summary>
+        public int[] Rot = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 
         public Mesh(float[] v, string name) { V = v; Name = name; }
 
@@ -33,6 +35,38 @@ namespace Windkanal3D
             }
         }
 
+        /// <summary>
+        /// Automatisch ausrichten: längste Seite in Strömungsrichtung (x), flachste nach oben (z).
+        /// Die Richtung "oben" der Datei bleibt oben; vorne/hinten lässt sich danach mit der Drehung um die Hochachse tauschen.
+        /// </summary>
+        public void AutoOrient()
+        {
+            float[] min, max;
+            Bounds(out min, out max);
+            var ext = new[] { max[0] - min[0], max[1] - min[1], max[2] - min[2] };
+            var idx = new[] { 0, 1, 2 };
+            Array.Sort(idx, (a, b) => ext[b].CompareTo(ext[a]));   // absteigend
+            var r = new int[9];
+            for (int row = 0; row < 3; row++) r[row * 3 + idx[row]] = 1;
+            // ungerade Vertauschung wäre ein Spiegelbild: dann die Querachse umdrehen
+            int det = r[0] * (r[4] * r[8] - r[5] * r[7]) - r[1] * (r[3] * r[8] - r[5] * r[6]) + r[2] * (r[3] * r[7] - r[4] * r[6]);
+            if (det < 0) for (int k = 3; k < 6; k++) r[k] = -r[k];
+            Rot = r;
+        }
+
+        /// <summary>Um 90° um eine Windkanal-Achse kippen (0 = x, 1 = y, 2 = z).</summary>
+        public void Rotate90(int axis)
+        {
+            int[] q = axis == 0 ? new[] { 1, 0, 0, 0, 0, -1, 0, 1, 0 }
+                    : axis == 1 ? new[] { 0, 0, 1, 0, 1, 0, -1, 0, 0 }
+                    : new[] { 0, -1, 0, 1, 0, 0, 0, 0, 1 };
+            var r = new int[9];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    for (int k = 0; k < 3; k++) r[i * 3 + j] += q[i * 3 + k] * Rot[k * 3 + j];
+            Rot = r;
+        }
+
         // ------------------------------------------------------------ Dateien
 
         /// <summary>Lädt eine .stl- oder .obj-Datei. Wirft eine Exception mit verständlichem Grund.</summary>
@@ -47,7 +81,9 @@ namespace Windkanal3D
             if (v.Length < 9) throw new Exception("Die Datei enthält keine Dreiecke.");
             for (int i = 0; i < v.Length; i++)
                 if (float.IsNaN(v[i]) || float.IsInfinity(v[i])) throw new Exception("Die Datei enthält ungültige Koordinaten.");
-            return new Mesh(v, name);
+            var m = new Mesh(v, name);
+            m.AutoOrient();
+            return m;
         }
 
         static float[] LoadStl(byte[] data)
@@ -237,11 +273,10 @@ namespace Windkanal3D
         /// <summary>Netz war nicht geschlossen (ungerade Anzahl Schnittpunkte auf manchen Strahlen).</summary>
         public int LeakyRays;
 
-        /// <param name="upIsY">Datei hat "oben" auf der y-Achse (viele OBJ-Dateien und Spiele-Modelle)</param>
         /// <param name="yaw">Drehung um die Hochachse in Grad</param>
         /// <param name="pitch">Anstellwinkel in Grad (positiv = Nase hoch)</param>
         /// <param name="size">größte Abmessung als Anteil der Tunnelbreite</param>
-        public static Placement Build(Mesh mesh, bool upIsY, double yaw, double pitch, double size, bool onGround,
+        public static Placement Build(Mesh mesh, double yaw, double pitch, double size, bool onGround,
                                       int nx, int ny, int nz)
         {
             var src = mesh.V;
@@ -252,10 +287,11 @@ namespace Windkanal3D
             float[] min, max;
             mesh.Bounds(out min, out max);
             double mx = (min[0] + max[0]) / 2, my = (min[1] + max[1]) / 2, mz = (min[2] + max[2]) / 2;
+            var R = mesh.Rot;
             for (int i = 0; i < src.Length; i += 3)
             {
-                double x = src[i] - mx, y = src[i + 1] - my, z = src[i + 2] - mz;
-                if (upIsY) { double t = y; y = -z; z = t; }
+                double a = src[i] - mx, b = src[i + 1] - my, c = src[i + 2] - mz;
+                double x = R[0] * a + R[1] * b + R[2] * c, y = R[3] * a + R[4] * b + R[5] * c, z = R[6] * a + R[7] * b + R[8] * c;
                 double x1 = x * cp + z * sp, z1 = -x * sp + z * cp;          // Anstellwinkel (um y)
                 double x2 = x1 * cy - y * sy, y2 = x1 * sy + y * cy;          // Gieren (um z)
                 w[i] = (float)x2; w[i + 1] = (float)y2; w[i + 2] = (float)z1;

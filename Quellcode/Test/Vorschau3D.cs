@@ -39,7 +39,7 @@ static class Vorschau3D
         // 2. Zellen: Kugel muss etwa das Kugelvolumen füllen, Würfel genau seine Zellen, alles geschlossen
         foreach (var m in Mesh.BuiltIn())
         {
-            var p = Placement.Build(m, false, 0, 0, 0.25, false, 256, 112, 112);
+            var p = Placement.Build(m, 0, 0, 0.25, false, 256, 112, 112);
             string extra = "";
             bool ok = p.LeakyRays == 0 && p.SolidCells > 0;
             if (m.Name == "Kugel")
@@ -54,6 +54,24 @@ static class Vorschau3D
             if (!ok) fails++;
         }
 
+        // 2b. Ausrichtung: "Auto" mit einem Y-oben-Modell (Länge auf z, Höhe auf y), wie es viele OBJ-Dateien haben
+        string car = Path.Combine(dir, "auto_y_oben.obj");
+        File.WriteAllText(car, "v -0.9 0 -2\nv 0.9 0 -2\nv 0.9 1.4 -2\nv -0.9 1.4 -2\nv -0.9 0 2.5\nv 0.9 0 2.5\nv 0.9 1.4 2.5\nv -0.9 1.4 2.5\n" +
+                               "f 1 2 3 4\nf 5 8 7 6\nf 1 5 6 2\nf 2 6 7 3\nf 3 7 8 4\nf 4 8 5 1\n");
+        {
+            var m = Mesh.Load(car);
+            var p = Placement.Build(m, 0, 0, 0.5, true, 256, 112, 112);
+            bool ok = p.LengthX > p.WidthY && p.WidthY > p.HeightZ && Math.Abs(p.LengthX / p.HeightZ - 4.5 / 1.4) < 0.05;
+            Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "Ausrichtung Y-oben-Modell: Länge " + p.LengthX.ToString("0.0") + ", Breite "
+                              + p.WidthY.ToString("0.0") + ", Höhe " + p.HeightZ.ToString("0.0") + " (Länge muss in Strömungsrichtung liegen, Höhe oben)");
+            if (!ok) fails++;
+            m.Rotate90(0);   // um die Strömungsachse kippen: jetzt liegt es auf der Seite
+            p = Placement.Build(m, 0, 0, 0.5, true, 256, 112, 112);
+            ok = Math.Abs(p.HeightZ / p.LengthX - 1.8 / 4.5) < 0.05;
+            Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "Kippen um X: Höhe jetzt " + p.HeightZ.ToString("0.0") + " (= Breite vorher)");
+            if (!ok) fails++;
+        }
+
         // 3. Fenster unsichtbar öffnen, rechnen lassen, Bilder speichern
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -63,18 +81,15 @@ static class Vorschau3D
         form.ShowInTaskbar = false;
         form.ClientSize = new Size(1600, 960);
         int shot = 0;
-        var t = new Timer { Interval = 4000 };
+        string[] names = { "kugel_stromlinien", "ahmed_stromlinien", "ahmed_rauch", "ahmed_schnittebene" };
+        var t = new Timer { Interval = 5000 };
         t.Tick += delegate
         {
-            Save(form, Path.Combine(dir, "fenster_" + (shot == 0 ? "kugel" : "ahmed") + ".png"));
-            if (shot == 0)
-            {
-                // zweites Bild: Ahmed-Körper (Auto-Referenz)
-                var cb = Find<Windkanal.DropDown>(form);
-                cb.SelectedIndex = 1;
-                shot++;
-                t.Interval = 6000;
-            }
+            Save(form, Path.Combine(dir, "fenster_" + names[shot] + ".png"));
+            shot++;
+            if (shot == 1) Find<Windkanal.DropDown>(form).SelectedIndex = 1;        // Ahmed-Körper
+            else if (shot == 2) Find<Windkanal.Segmented>(form).SelectedIndex = 1;   // Rauch
+            else if (shot == 3) Find<Windkanal.Segmented>(form).SelectedIndex = 2;   // Schnittebene
             else { t.Stop(); form.Close(); }
         };
         form.Shown += delegate { t.Start(); };

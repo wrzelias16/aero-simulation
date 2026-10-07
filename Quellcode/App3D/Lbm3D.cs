@@ -98,8 +98,9 @@ namespace Windkanal3D
 
         public readonly int NX, NY, NZ, N;
         readonly int groups;
-        IntPtr program, kStep, kBounds, kInit, kMacro, kSlice;
-        IntPtr bufA, bufB, bFlag, bForce, bMacro, bSlice;
+        IntPtr program, kStep, kBounds, kInit, kMacro, kSlice, kCoarse;
+        IntPtr bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse;
+        long coarseBytes;
         bool swapped;
         readonly float[] forceHost;
 
@@ -134,6 +135,7 @@ namespace Windkanal3D
             kInit = Kernel("lbm3_init");
             kMacro = Kernel("lbm3_macro");
             kSlice = Kernel("lbm3_slice");
+            kCoarse = Kernel("lbm3_coarse");
 
             bufA = Buffer((long)Q * N * 4);
             bufB = Buffer((long)Q * N * 4);
@@ -231,13 +233,35 @@ namespace Windkanal3D
             return data;
         }
 
+        /// <summary>
+        /// Geschwindigkeitsfeld in jeder 'stride'-ten Zelle (x, y, z je Punkt, feste Zellen = 0), für Stromlinien und Rauch.
+        /// Größe des groben Gitters: (NX + stride - 1) / stride usw.
+        /// </summary>
+        public float[] ReadVelocity(int stride, out int cnx, out int cny, out int cnz)
+        {
+            cnx = (NX + stride - 1) / stride; cny = (NY + stride - 1) / stride; cnz = (NZ + stride - 1) / stride;
+            long count = (long)cnx * cny * cnz;
+            if (bCoarse == IntPtr.Zero || coarseBytes < count * 12)
+            {
+                if (bCoarse != IntPtr.Zero) CL.clReleaseMemObject(bCoarse);
+                coarseBytes = count * 12;
+                bCoarse = Buffer(coarseBytes);
+            }
+            Arg(kCoarse, 0, Src); Arg(kCoarse, 1, bFlag); Arg(kCoarse, 2, bCoarse); Arg(kCoarse, 3, stride);
+            Arg(kCoarse, 4, cnx); Arg(kCoarse, 5, cny); Arg(kCoarse, 6, cnz);
+            Run(kCoarse, count);
+            var data = new float[count * 3];
+            Check(CL.clEnqueueReadBuffer(queue, bCoarse, 1, UIntPtr.Zero, (UIntPtr)(count * 12), data, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
+            return data;
+        }
+
         public void Dispose()
         {
-            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice }) if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
-            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice }) if (k != IntPtr.Zero) CL.clReleaseKernel(k);
+            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse }) if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
+            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse }) if (k != IntPtr.Zero) CL.clReleaseKernel(k);
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
-            bufA = bufB = bFlag = bForce = bMacro = bSlice = IntPtr.Zero;
-            kStep = kBounds = kInit = kMacro = kSlice = IntPtr.Zero;
+            bufA = bufB = bFlag = bForce = bMacro = bSlice = bCoarse = IntPtr.Zero;
+            kStep = kBounds = kInit = kMacro = kSlice = kCoarse = IntPtr.Zero;
             program = IntPtr.Zero;
         }
 
@@ -415,6 +439,23 @@ __kernel void lbm3_slice(__global const float* src, __global const uchar* flag, 
         rho += f; mx += f * (float)CX[i]; my += f * (float)CY[i]; mz += f * (float)CZ[i];
     }
     out[j] = sqrt(mx * mx + my * my + mz * mz) / rho * invU;
+}
+
+__kernel void lbm3_coarse(__global const float* src, __global const uchar* flag, __global float* out, int s, int cnx, int cny, int cnz)
+{
+    int j = get_global_id(0);
+    if (j >= cnx * cny * cnz) return;
+    int i = j % cnx, k = (j / cnx) % cny, l = j / (cnx * cny);
+    int x = min(i * s, NX - 1), y = min(k * s, NY - 1), z = min(l * s, NZ - 1);
+    int c = x + NX * (y + NY * z);
+    if (flag[c] != 0) { out[3 * j] = 0.0f; out[3 * j + 1] = 0.0f; out[3 * j + 2] = 0.0f; return; }
+    float rho = 0.0f, mx = 0.0f, my = 0.0f, mz = 0.0f;
+    for (int q = 0; q < 19; q++)
+    {
+        float f = src[q * N + c];
+        rho += f; mx += f * (float)CX[q]; my += f * (float)CY[q]; mz += f * (float)CZ[q];
+    }
+    out[3 * j] = mx / rho; out[3 * j + 1] = my / rho; out[3 * j + 2] = mz / rho;
 }
 ";
     }

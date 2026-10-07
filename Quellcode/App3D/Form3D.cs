@@ -28,13 +28,19 @@ namespace Windkanal3D
 
         // Zustand
         readonly List<Mesh> meshes = new List<Mesh>(Mesh.BuiltIn());
-        static readonly int BuiltInCount = Mesh.BuiltIn().Length;
         Mesh mesh;
         Placement place;
         Lbm3D lbm;
         string gpuError;
         int resIndex = 1, sizePercent = 25, yaw, pitch, sliceAxis, slicePos = 50;
-        bool upIsY, onGround, running = true, suppress;
+        bool onGround, running = true, suppress;
+        /// <summary>Darstellung in der 3D-Ansicht: 0 = Stromlinien, 1 = Rauch, 2 = Schnittebene, 3 = nur Körper.</summary>
+        int vizMode;
+        FlowField field;
+        List<float[]> rakeLines, rakeSmoke;
+        readonly Smoke smoke = new Smoke();
+        double lastField, lastLines;
+        long stepsAtField;
         double reynolds = 100, reUsed, tauUsed;
         long steps;
 
@@ -54,11 +60,12 @@ namespace Windkanal3D
         readonly Timer timer = new Timer();
         readonly Timer settleRender = new Timer { Interval = 140 };
         readonly Stopwatch clock = Stopwatch.StartNew();
-        double lastSlice, rateClock;
+        double lastSlice, rateClock, gpuMsPerStep = 2, lastRender;
         long rateSteps;
 
         // Oberfläche
-        Segmented segMode, segUp, segSlice;
+        Segmented segMode, segViz, segSlice;
+        FlatButton btnRotX, btnRotY, btnRotZ, btnAuto;
         FlatButton btnRun, btnReset, btnTheme, btnLoad;
         Card cardView, cardCd, cardCl, cardKenn, cardSlice, cardSet;
         ViewCanvas view;
@@ -126,7 +133,16 @@ namespace Windkanal3D
             btnReset.Click += delegate { ResetFlow(); };
             btnTheme.Click += delegate { SwitchTheme(); };
             UpdateThemeButton();
-            Controls.AddRange(new Control[] { segMode, btnRun, btnReset, btnTheme });
+            segViz = new Segmented { BackColor = Theme.Bg };
+            segViz.Items.AddRange(new[] { "Stromlinien", "Rauch", "Schnittebene", "Nur Körper" });
+            segViz.SelectedIndexChanged += delegate
+            {
+                vizMode = segViz.SelectedIndex;
+                smoke.Clear();
+                lastLines = lastField = 0;
+                UpdateSceneFlow();
+            };
+            Controls.AddRange(new Control[] { segViz, segMode, btnRun, btnReset, btnTheme });
 
             // --- 3D-Ansicht
             cardView = new Card("3D-Ansicht");
@@ -179,9 +195,28 @@ namespace Windkanal3D
             btnLoad = (FlatButton)add(new FlatButton { Text = "3D-Datei laden (STL, OBJ)", Icon = "" }, 40, 6);
             btnLoad.Click += delegate { LoadFile(); };
             hintModel = (HintLabel)add(new HintLabel(""), 32, 4);
-            segUp = (Segmented)add(new Segmented(), 40, 8);
-            segUp.Items.AddRange(new[] { "Oben = Z-Achse", "Oben = Y-Achse" });
-            segUp.SelectedIndexChanged += delegate { upIsY = segUp.SelectedIndex == 1; if (!suppress) Rebuild(); };
+            // Ausrichtung: um 90° kippen (x = Strömungsrichtung, y = quer, z = oben) oder automatisch
+            int bw4 = (w - 3 * 8) / 4;
+            btnRotX = new FlatButton { Text = "X", Icon = "\uE7AD" };
+            btnRotY = new FlatButton { Text = "Y", Icon = "\uE7AD" };
+            btnRotZ = new FlatButton { Text = "Z", Icon = "\uE7AD" };
+            btnAuto = new FlatButton { Text = "Auto" };
+            var rotBtns = new[] { btnRotX, btnRotY, btnRotZ, btnAuto };
+            for (int i = 0; i < 4; i++)
+            {
+                rotBtns[i].BackColor = Theme.Card;
+                rotBtns[i].SetBounds(Card.Pad + i * (bw4 + 8), y, bw4, 40);
+                cardSet.Controls.Add(rotBtns[i]);
+            }
+            y += 48;
+            tips.SetToolTip(btnRotX, "Um die Strömungsrichtung kippen (90°)");
+            tips.SetToolTip(btnRotY, "Nase hoch/runter kippen (90°)");
+            tips.SetToolTip(btnRotZ, "Um die Hochachse drehen (90°)");
+            tips.SetToolTip(btnAuto, "Automatisch: längste Seite in Strömungsrichtung, flachste Seite nach oben");
+            btnRotX.Click += delegate { mesh.Rotate90(0); Rebuild(); };
+            btnRotY.Click += delegate { mesh.Rotate90(1); Rebuild(); };
+            btnRotZ.Click += delegate { mesh.Rotate90(2); Rebuild(); };
+            btnAuto.Click += delegate { mesh.AutoOrient(); Rebuild(); };
             tbYaw = (FlatSlider)add(new FlatSlider { Text = "Drehung um die Hochachse", Minimum = -180, Maximum = 180 }, 46, 4);
             tbYaw.ValueChanged += delegate { yaw = tbYaw.Value; UpdateLabels(); if (!suppress) RebuildSoon(); };
             tbPitch = (FlatSlider)add(new FlatSlider { Text = "Anstellwinkel", Minimum = -45, Maximum = 45 }, 46, 4);
@@ -239,7 +274,6 @@ namespace Windkanal3D
             tbSize.Value = sizePercent = car ? 50 : mesh.Name == "Kugel" ? 25 : 30;
             tbYaw.Value = yaw = 0;
             tbPitch.Value = pitch = 0;
-            if (meshes.IndexOf(mesh) < BuiltInCount) { segUp.SelectedIndex = 0; upIsY = false; }   // geladene Dateien behalten ihre Ausrichtung
             suppress = false;
             UpdateLabels();
         }
@@ -268,6 +302,8 @@ namespace Windkanal3D
             }
             int mw = segMode.PreferredWidth;
             segMode.SetBounds(x - 18 - mw, (TopH - 44) / 2 + 2, mw, 44);
+            int vw = segViz.PreferredWidth;
+            segViz.SetBounds(Math.Max(240, Outer + (lw - vw) / 2 + 40), (TopH - 44) / 2 + 2, vw, 44);
 
             cardView.SetBounds(Outer, TopH, lw, by - Gap - TopH);
             view.SetBounds(12, Card.Head, cardView.Width - 24, cardView.Height - Card.Head - 40);
@@ -392,10 +428,18 @@ namespace Windkanal3D
                 suppress = true;
                 tbSize.Value = sizePercent = 40;
                 tbYaw.Value = yaw = 0; tbPitch.Value = pitch = 0;
+                chkGround.Checked = onGround = LooksLikeVehicle(m);
                 suppress = false;
                 UpdateLabels();
                 Rebuild();
             }
+        }
+
+        /// <summary>Flach und lang (nach dem automatischen Ausrichten) = vermutlich ein Fahrzeug, das auf dem Boden steht.</summary>
+        static bool LooksLikeVehicle(Mesh m)
+        {
+            var p = Placement.Build(m, 0, 0, 0.5, false, 64, 64, 64);
+            return p.HeightZ < 0.5 * p.LengthX && p.HeightZ <= p.WidthY * 1.2;
         }
 
         void CreateSolver()
@@ -428,10 +472,11 @@ namespace Windkanal3D
         {
             rebuildPending = false;
             Cursor = Cursors.WaitCursor;
-            place = Placement.Build(mesh, upIsY, yaw, pitch, sizePercent / 100.0, onGround, scene.NX, scene.NY, scene.NZ);
+            place = Placement.Build(mesh, yaw, pitch, sizePercent / 100.0, onGround, scene.NX, scene.NY, scene.NZ);
             Cursor = Cursors.Default;
             scene.Triangles = place.World;
             if (lbm != null) lbm.SetSolid(place.Solid);
+            BuildRakes();
             UpdateFlowParams();
             ResetFlow();
             UpdateSlicePlane();
@@ -456,6 +501,12 @@ namespace Windkanal3D
         {
             if (lbm != null) lbm.Reset(UIn);
             steps = 0;
+            stepsAtField = 0;
+            field = null;
+            smoke.Clear();
+            scene.Lines = null;
+            scene.SmokeCount = 0;
+            lastField = lastLines = 0;
             history.Clear();
             cw = ca = cs = cwMean = caMean = 0;
             settled = false;
@@ -508,12 +559,12 @@ namespace Windkanal3D
             if (!running || lbm == null || place == null) return;
 
             // so viele Schritte, wie in ~30 ms passen
-            double msPer = mlups > 0 ? lbm.N / (mlups * 1000.0) : 2;
-            int n = Math.Max(1, Math.Min(400, (int)(30 / Math.Max(0.01, msPer))));
+            int n = Math.Max(1, Math.Min(400, (int)(28 / Math.Max(0.01, gpuMsPerStep))));
             var sw = Stopwatch.StartNew();
             double fx, fy, fz;
             lbm.Step(n, (float)(1 / tauUsed), UIn, out fx, out fy, out fz);
             sw.Stop();
+            gpuMsPerStep = 0.7 * gpuMsPerStep + 0.3 * sw.Elapsed.TotalMilliseconds / n;
             steps += n;
             rateSteps += n;
             if (now - rateClock > 500)
@@ -539,7 +590,68 @@ namespace Windkanal3D
             settled = through > 1.0 && history.Count >= keep && (hi - lo) < 0.03 * Math.Abs(cwMean) + 1e-6;
 
             if (now - lastSlice > 120) { lastSlice = now; RenderSlice(); }
+            UpdateFlowView(now);
             InvalidateCards();
+        }
+
+        void BuildRakes()
+        {
+            if (place == null) return;
+            var w = place.World;
+            var bmin = new[] { float.MaxValue, float.MaxValue, float.MaxValue };
+            var bmax = new[] { float.MinValue, float.MinValue, float.MinValue };
+            for (int i = 0; i < w.Length; i++) { int a = i % 3; bmin[a] = Math.Min(bmin[a], w[i]); bmax[a] = Math.Max(bmax[a], w[i]); }
+            rakeLines = Rake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, 11, 5, onGround);
+            rakeSmoke = Rake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, 15, 6, onGround);
+        }
+
+        /// <summary>Geschwindigkeitsfeld holen, Stromlinien bzw. Rauch nachführen und die 3D-Ansicht neu zeichnen.</summary>
+        void UpdateFlowView(double now)
+        {
+            if (lbm == null || vizMode == 3) return;
+            bool redraw = false;
+            if (vizMode == 2)
+            {
+                if (now - lastField > 150) { lastField = now; redraw = true; }   // Schnittebene kommt aus RenderSlice
+            }
+            else
+            {
+                double every = vizMode == 1 ? 90 : 350;
+                if (field == null || now - lastField > every)
+                {
+                    int stride = Math.Max(1, (int)Math.Ceiling(Math.Pow(lbm.N / 600000.0, 1.0 / 3)));
+                    int cnx, cny, cnz;
+                    float[] u = lbm.ReadVelocity(stride, out cnx, out cny, out cnz);
+                    field = new FlowField(u, stride, cnx, cny, cnz, scene.NX, scene.NY, scene.NZ, place.Solid);
+                    lastField = now;
+                }
+                if (vizMode == 0 && now - lastLines > 350 && rakeLines != null)
+                {
+                    lastLines = now;
+                    scene.Lines = Streamlines.Trace(field, rakeLines, UIn);
+                    redraw = true;
+                }
+                if (vizMode == 1 && rakeSmoke != null)
+                {
+                    float dt = steps - stepsAtField;
+                    stepsAtField = steps;
+                    if (dt > 0) smoke.Update(field, rakeSmoke, dt, UIn);
+                    redraw = true;
+                }
+            }
+            // höchstens etwa 30 Bilder pro Sekunde, damit die Rechnung Vorrang hat
+            if (redraw && now - lastRender > 33) { lastRender = now; UpdateSceneFlow(); }
+        }
+
+        void UpdateSceneFlow()
+        {
+            scene.Lut = sliceLut;
+            scene.Lines = vizMode == 0 ? scene.Lines : null;
+            scene.SmokeP = smoke.P;
+            scene.SmokeCount = vizMode == 1 ? smoke.Count : 0;
+            scene.ShowSlicePlane = vizMode == 2;
+            sceneDirty = true;
+            view.Invalidate();
         }
 
         void InvalidateCards() { cardCd.Invalidate(); cardCl.Invalidate(); cardKenn.Invalidate(); }
@@ -658,6 +770,7 @@ namespace Windkanal3D
             if (lbm == null || sliceView == null) return;
             int w = scene.NX, h = sliceAxis == 0 ? scene.NZ : scene.NY;
             float[] d = lbm.ReadSlice(sliceAxis, scene.SliceIndex, UIn);
+            scene.SliceData = d;
             if (sliceBmp == null || sliceBmp.Width != w || sliceBmp.Height != h)
             {
                 if (sliceBmp != null) sliceBmp.Dispose();
@@ -670,7 +783,7 @@ namespace Windkanal3D
                 {
                     float v = d[r * w + x];
                     // oben im Bild = oben im Kanal (Seitenschnitt) bzw. links in Strömungsrichtung (Draufsicht)
-                    px[(h - 1 - r) * w + x] = v < 0 ? solid : sliceLut[Math.Max(0, Math.Min(255, (int)(v / 2f * 255)))];
+                    px[(h - 1 - r) * w + x] = v < 0 ? solid : sliceLut[Math.Max(0, Math.Min(255, (int)(v / 1.5f * 255)))];
                 }
             var data = sliceBmp.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.WriteOnly, sliceBmp.PixelFormat);
             for (int r = 0; r < h; r++) System.Runtime.InteropServices.Marshal.Copy(px, r * w, data.Scan0 + r * data.Stride, w);
@@ -707,7 +820,7 @@ namespace Windkanal3D
             for (int i = 0; i < lw; i++)
                 using (var p = new Pen(Color.FromArgb(sliceLut[i * 255 / (lw - 1)]))) g.DrawLine(p, lx + i, ly, lx + i, ly + 8);
             Theme.Draw(g, "0", Theme.Small, Theme.Muted, new Rectangle(lx - 40, ly - 5, 34, 18), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
-            Theme.Draw(g, "2 · U∞", Theme.Small, Theme.Muted, new Rectangle(lx, ly + 8, lw, 18), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Theme.Draw(g, "1,5 · U∞", Theme.Small, Theme.Muted, new Rectangle(lx, ly + 8, lw, 18), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
         }
 
         // ------------------------------------------------------------------ Messwert-Karten
