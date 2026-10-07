@@ -19,7 +19,7 @@ namespace Windkanal3D
         static readonly string[] ResNames = { "Niedrig", "Mittel", "Hoch", "Sehr hoch", "Ultra" };
         static readonly CultureInfo De = CultureInfo.GetCultureInfo("de-DE");
         const float UIn = 0.05f;
-        const double TauMin = 0.52;   // darunter wird der jetzige Rechenkern instabil
+        const double TauMin = 0.50001;   // mit Turbulenzmodell (LES) bis Re ~ 1 Mio. stabil (getestet an der Kugel)
 
         const int Outer = 18, Gap = 14, TopH = 76, RightW = 344, BottomH = 206;
 
@@ -40,7 +40,8 @@ namespace Windkanal3D
         List<float[]> rakeLines, rakeSmoke;
         double lastField, lastLines;
 
-        double reynolds = 100, reUsed, tauUsed;
+        double reynolds = 20000, reUsed, tauUsed;
+        float[] bodyMin, bodyMax;
         long steps;
 
         // Messwerte
@@ -419,8 +420,9 @@ namespace Windkanal3D
             if (hintRe != null)
             {
                 bool limited = reUsed < reynolds * 0.999;
-                hintRe.Text = limited ? "Begrenzt auf Re " + FormatRe(reUsed) + " (höher wird der Rechenkern noch instabil)"
-                                      : "Bezugslänge: Länge des Körpers in Strömungsrichtung";
+                hintRe.Text = limited ? "Begrenzt auf Re " + FormatRe(reUsed) + " (höher wird der Rechenkern instabil)"
+                                      : reynolds > 2000 ? "Mit Turbulenzmodell (LES) · Bezug: Länge des Körpers"
+                                                        : "Bezugslänge: Länge des Körpers in Strömungsrichtung";
                 hintRe.Invalidate();
             }
         }
@@ -429,12 +431,12 @@ namespace Windkanal3D
 
         static double SliderToRe(int v)
         {
-            double re = 10 * Math.Pow(100, v / 200.0);   // 10 … 1000
+            double re = 10 * Math.Pow(100000, v / 200.0);   // 10 … 1 000 000
             double mag = Math.Pow(10, Math.Floor(Math.Log10(re)) - 1);
             return Math.Round(re / mag) * mag;
         }
 
-        static int ReToSlider(double re) { return (int)Math.Round(200 * Math.Log(re / 10) / Math.Log(100)); }
+        static int ReToSlider(double re) { return (int)Math.Round(200 * Math.Log(re / 10) / Math.Log(100000)); }
 
         // ------------------------------------------------------------------ Modell und Rechnung
 
@@ -722,6 +724,10 @@ namespace Windkanal3D
             var bmin = new[] { float.MaxValue, float.MaxValue, float.MaxValue };
             var bmax = new[] { float.MinValue, float.MinValue, float.MinValue };
             for (int i = 0; i < w.Length; i++) { int a = i % 3; bmin[a] = Math.Min(bmin[a], w[i]); bmax[a] = Math.Max(bmax[a], w[i]); }
+            bodyMin = bmin; bodyMax = bmax;
+            // Kamera auf Körper und Nachlauf richten (etwa 2,5 Körperlängen Bildbreite)
+            float blen = bmax[0] - bmin[0], bdia = (float)Math.Sqrt(blen * blen + Math.Pow(bmax[1] - bmin[1], 2) + Math.Pow(bmax[2] - bmin[2], 2));
+            scene.Focus = new double[] { (bmin[0] + bmax[0]) / 2 + 0.5 * blen, (bmin[1] + bmax[1]) / 2, (bmin[2] + bmax[2]) / 2, 2.2 * bdia };
             rakeLines = Rake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, 11, 5, onGround);
             rakeSmoke = SmokeRake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, onGround);
             ApplySmokeMode();
@@ -742,11 +748,25 @@ namespace Windkanal3D
         {
             if (lbm == null) return;
             bool on = vizMode == 1;
-            if (on && rakeSmoke != null)
+            if (on && rakeSmoke != null && bodyMin != null)
             {
+                // Rauch nur dort rechnen, wo er zu sehen ist: vom Rauchrechen bis weit hinter den Körper, mit Rand.
+                // Dort in doppelter Auflösung (achtmal so viele Rauchzellen), solange das in etwa 2,5-mal so viele
+                // Rauchzellen wie Strömungszellen passt; sonst in einfacher Auflösung.
+                float len = bodyMax[0] - bodyMin[0], wid = bodyMax[1] - bodyMin[1], hgt = bodyMax[2] - bodyMin[2];
+                float rx = rakeSmoke[0][0];
+                int x0 = (int)(rx - 6), x1 = (int)Math.Min(scene.NX, bodyMax[0] + 3 * Math.Max(len, 2 * hgt));
+                int y0 = (int)(bodyMin[1] - 0.9f * wid - 6), y1 = (int)Math.Ceiling(bodyMax[1] + 0.9f * wid + 6);
+                int z0 = onGround ? 0 : (int)(bodyMin[2] - 0.8f * hgt - 6), z1 = (int)Math.Ceiling(bodyMax[2] + 1.0f * hgt + 6);
+                x0 = Math.Max(0, x0); y0 = Math.Max(0, y0); z0 = Math.Max(0, z0);
+                x1 = Math.Min(scene.NX, x1); y1 = Math.Min(scene.NY, y1); z1 = Math.Min(scene.NZ, z1);
+                long box = (long)(x1 - x0) * (y1 - y0) * (z1 - z0);
+                int refine = box * 8 <= 2.5 * lbm.N ? 2 : 1;
+                lbm.SetSmokeBox(x0, y0, z0, x1 - x0, y1 - y0, z1 - z0, refine);
                 var xyz = new float[rakeSmoke.Count * 3];
                 for (int i = 0; i < rakeSmoke.Count; i++) { xyz[3 * i] = rakeSmoke[i][0]; xyz[3 * i + 1] = rakeSmoke[i][1]; xyz[3 * i + 2] = rakeSmoke[i][2]; }
-                lbm.SetSmokeSources(xyz, Math.Max(0.9f, scene.NY / 112f * 0.9f));
+                // dünne Fäden: bei doppelter Auflösung gut eine Rauchzelle Radius
+                lbm.SetSmokeSources(xyz, refine == 2 ? 0.6f : 0.9f);
             }
             if (on && !lbm.SmokeOn) lbm.SmokeClear();
             lbm.SmokeOn = on;

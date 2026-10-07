@@ -5,7 +5,7 @@ using System.Text;
 namespace Windkanal3D
 {
     /// <summary>
-    /// 3D-Strömungslöser nach der Lattice-Boltzmann-Methode (D3Q19, BGK) auf der Grafikkarte (OpenCL).
+    /// 3D-Strömungslöser nach der Lattice-Boltzmann-Methode (D3Q19, BGK mit Smagorinsky-Turbulenzmodell) auf der Grafikkarte (OpenCL).
     /// Eigenständig: benutzt nichts aus dem 2D-Code (Namensraum Windkanal3D, eigener OpenCL-Zugriff),
     /// damit 2D und 3D sich nie gegenseitig beeinflussen.
     ///
@@ -118,6 +118,10 @@ namespace Windkanal3D
         IntPtr bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage;
         int sourceCount, imageW, imageH;
         float sourceRadius;
+        // Rauchgitter: Kasten ab Strömungszelle (sox, soy, soz), snx x sny x snz Rauchzellen, sr Rauchzellen je Strömungszelle
+        int snx, sny, snz, sox, soy, soz, sr = 1;
+        long sCells;
+        float[] sourcesFlow;
         int smokeCounter;
         /// <summary>Rauch wird mitgerechnet (kostet etwa so viel wie die Strömung selbst).</summary>
         public bool SmokeOn;
@@ -295,10 +299,41 @@ namespace Windkanal3D
 
         void EnsureSmoke()
         {
-            if (bPhi != IntPtr.Zero) return;
-            bUx = Buffer(N * 4L); bUy = Buffer(N * 4L); bUz = Buffer(N * 4L);
-            bPhi = Buffer(N * 4L); bPhiNew = Buffer(N * 4L); bHat = Buffer(N * 4L); bBar = Buffer(N * 4L);
+            if (bUx == IntPtr.Zero) { bUx = Buffer(N * 4L); bUy = Buffer(N * 4L); bUz = Buffer(N * 4L); }
+            if (bPhi == IntPtr.Zero) SetSmokeBox(0, 0, 0, NX, NY, NZ, 1);
+        }
+
+        /// <summary>Feinheit des Rauchgitters (Rauchzellen je Strömungszelle und Richtung).</summary>
+        public int SmokeRefine { get { return sr; } }
+        /// <summary>Anzahl der Rauchzellen.</summary>
+        public long SmokeCells { get { return sCells; } }
+
+        /// <summary>
+        /// Legt fest, wo und wie fein der Rauch gerechnet wird: Kasten ab Strömungszelle (ox, oy, oz) mit sx x sy x sz
+        /// Strömungszellen, 'refine' Rauchzellen je Strömungszelle und Richtung (2 = achtmal so viele Rauchzellen).
+        /// Die Geschwindigkeit wird dazwischen weich (trilinear) aus dem Strömungsgitter geholt.
+        /// </summary>
+        public void SetSmokeBox(int ox, int oy, int oz, int sx, int sy, int sz, int refine)
+        {
+            ox = Math.Max(0, Math.Min(NX - 2, ox)); oy = Math.Max(0, Math.Min(NY - 2, oy)); oz = Math.Max(0, Math.Min(NZ - 2, oz));
+            sx = Math.Max(2, Math.Min(NX - ox, sx)); sy = Math.Max(2, Math.Min(NY - oy, sy)); sz = Math.Max(2, Math.Min(NZ - oz, sz));
+            refine = Math.Max(1, refine);
+            long cells = (long)sx * refine * sy * refine * sz * refine;
+            if (bPhi == IntPtr.Zero || cells != sCells)
+            {
+                foreach (var b in new[] { bPhi, bPhiNew, bHat, bBar }) if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
+                bPhi = Buffer(cells * 4); bPhiNew = Buffer(cells * 4); bHat = Buffer(cells * 4); bBar = Buffer(cells * 4);
+            }
+            sox = ox; soy = oy; soz = oz; sr = refine;
+            snx = sx * refine; sny = sy * refine; snz = sz * refine; sCells = cells;
             SmokeClear();
+            if (sourcesFlow != null) SetSmokeSources(sourcesFlow, sourceRadius);
+        }
+
+        void SmokeArgs(IntPtr k, uint first)
+        {
+            Arg(k, first, snx); Arg(k, first + 1, sny); Arg(k, first + 2, snz);
+            Arg(k, first + 3, sox); Arg(k, first + 4, soy); Arg(k, first + 5, soz); Arg(k, first + 6, sr);
         }
 
         /// <summary>Allen Rauch entfernen.</summary>
@@ -307,24 +342,28 @@ namespace Windkanal3D
             if (bPhi == IntPtr.Zero) return;
             foreach (var b in new[] { bPhi, bPhiNew })
             {
-                Arg(kSmClear, 0, b);
-                Run(kSmClear, N);
+                Arg(kSmClear, 0, b); Arg(kSmClear, 1, (int)sCells);
+                Run(kSmClear, sCells);
             }
         }
 
         /// <summary>
-        /// Rauchquellen (Düsen eines Rauchrechens): je Punkt x, y, z in Zellkoordinaten (Mitte von Zelle i = i + 0,5).
-        /// Aus jeder Düse strömt laufend ein dünner Rauchfaden mit dem Radius 'radius' (Zellen).
+        /// Rauchquellen (Düsen eines Rauchrechens): je Punkt x, y, z in Strömungszellen (Mitte von Zelle i = i + 0,5).
+        /// Aus jeder Düse strömt laufend ein dünner Rauchfaden mit dem Radius 'radius' (in Strömungszellen).
         /// </summary>
         public void SetSmokeSources(float[] xyz, float radius)
         {
             EnsureSmoke();
+            sourcesFlow = xyz;
             sourceCount = xyz.Length / 3;
             sourceRadius = radius;
             var pts = new float[Math.Max(1, sourceCount) * 4];
             for (int i = 0; i < sourceCount; i++)
             {
-                pts[4 * i] = xyz[3 * i] - 0.5f; pts[4 * i + 1] = xyz[3 * i + 1] - 0.5f; pts[4 * i + 2] = xyz[3 * i + 2] - 0.5f;
+                // in Rauchzellen-Koordinaten (Rauchzelle i liegt bei i)
+                pts[4 * i] = (xyz[3 * i] - sox) * sr - 0.5f;
+                pts[4 * i + 1] = (xyz[3 * i + 1] - soy) * sr - 0.5f;
+                pts[4 * i + 2] = (xyz[3 * i + 2] - soz) * sr - 0.5f;
             }
             if (bSources != IntPtr.Zero) CL.clReleaseMemObject(bSources);
             bSources = Buffer(pts.Length * 4L);
@@ -339,13 +378,16 @@ namespace Windkanal3D
             SmokeTrace(bHat, bBar, -dt);
             Arg(kSmCorrect, 0, bPhi); Arg(kSmCorrect, 1, bHat); Arg(kSmCorrect, 2, bBar); Arg(kSmCorrect, 3, bPhiNew);
             Arg(kSmCorrect, 4, bUx); Arg(kSmCorrect, 5, bUy); Arg(kSmCorrect, 6, bUz); Arg(kSmCorrect, 7, bFlag); Arg(kSmCorrect, 8, dt);
-            Run(kSmCorrect, N);
+            SmokeArgs(kSmCorrect, 9);
+            Run(kSmCorrect, sCells);
             var t = bPhi; bPhi = bPhiNew; bPhiNew = t;
             if (sourceCount > 0)
             {
-                int r = (int)Math.Ceiling(sourceRadius) + 1, k = 2 * r + 1;
+                float rad = sourceRadius * sr;
+                int r = (int)Math.Ceiling(rad) + 1, k = 2 * r + 1;
                 Arg(kSmInject, 0, bPhi); Arg(kSmInject, 1, bFlag); Arg(kSmInject, 2, bSources); Arg(kSmInject, 3, sourceCount);
-                Arg(kSmInject, 4, r); Arg(kSmInject, 5, sourceRadius);
+                Arg(kSmInject, 4, r); Arg(kSmInject, 5, rad);
+                SmokeArgs(kSmInject, 6);
                 Run(kSmInject, (long)sourceCount * k * k * k);
             }
         }
@@ -354,7 +396,8 @@ namespace Windkanal3D
         {
             Arg(kSmTrace, 0, src); Arg(kSmTrace, 1, dst); Arg(kSmTrace, 2, bUx); Arg(kSmTrace, 3, bUy); Arg(kSmTrace, 4, bUz);
             Arg(kSmTrace, 5, bFlag); Arg(kSmTrace, 6, dt);
-            Run(kSmTrace, N);
+            SmokeArgs(kSmTrace, 7);
+            Run(kSmTrace, sCells);
         }
 
         /// <summary>
@@ -379,6 +422,7 @@ namespace Windkanal3D
             Arg(kSmRender, a++, bPhi); Arg(kSmRender, a++, bDepth); Arg(kSmRender, a++, bImage); Arg(kSmRender, a++, w); Arg(kSmRender, a++, h);
             for (int i = 0; i < 13; i++) Arg(kSmRender, a++, cam[i]);
             Arg(kSmRender, a++, r); Arg(kSmRender, a++, g); Arg(kSmRender, a++, b); Arg(kSmRender, a++, density);
+            SmokeArgs(kSmRender, a);
             Run(kSmRender, (long)w * h);
             var img = new byte[(long)w * h * 4];
             Check(CL.clEnqueueReadBuffer(queue, bImage, 1, UIntPtr.Zero, (UIntPtr)img.LongLength, img, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
@@ -500,12 +544,24 @@ __kernel void lbm3_step(__global const FT* src, __global FT* dst, __global const
             ux *= inv; uy *= inv; uz *= inv;
             if (writeVel) { vx[c] = ux; vy[c] = uy; vz[c] = uz; }
             float usq = 1.5f * (ux * ux + uy * uy + uz * uz);
+            float feq[19];
+            // Turbulenzmodell (LES nach Smagorinsky): wo die Strömung stark geschert wird, wirkt eine kleine zusätzliche
+            // Zähigkeit, die die nicht aufgelösten Wirbel ersetzt. Bei ruhiger Strömung bleibt sie praktisch null.
+            float pxx = 0.0f, pyy = 0.0f, pzz = 0.0f, pxy = 0.0f, pxz = 0.0f, pyz = 0.0f;
             for (int i = 0; i < 19; i++)
             {
                 float cu = 3.0f * ((float)CX[i] * ux + (float)CY[i] * uy + (float)CZ[i] * uz);
-                float feq = W[i] * rho * (1.0f + cu + 0.5f * cu * cu - usq);
-                ST(dst, i * N + c, i, f[i] - omega * (f[i] - feq));
+                feq[i] = W[i] * rho * (1.0f + cu + 0.5f * cu * cu - usq);
+                float fn = f[i] - feq[i];
+                float cx = (float)CX[i], cy = (float)CY[i], cz = (float)CZ[i];
+                pxx += cx * cx * fn; pyy += cy * cy * fn; pzz += cz * cz * fn;
+                pxy += cx * cy * fn; pxz += cx * cz * fn; pyz += cy * cz * fn;
             }
+            float tau0 = 1.0f / omega;
+            float qq = pxx * pxx + pyy * pyy + pzz * pzz + 2.0f * (pxy * pxy + pxz * pxz + pyz * pyz);
+            float tau = 0.5f * tau0 + 0.5f * sqrt(tau0 * tau0 + 0.76421222f * sqrt(qq) / rho);   // Cs = 0,173 wie FluidX3D
+            float om = 1.0f / tau;
+            for (int i = 0; i < 19; i++) ST(dst, i * N + c, i, f[i] - om * (f[i] - feq[i]));
         }
     }
     if (!doForce) return;   // für alle Arbeitsgruppen gleich, darum ohne Gefahr vor den Barrieren
@@ -622,8 +678,11 @@ __kernel void lbm3_coarse(__global const FT* src, __global const uchar* flag, __
 }
 
 // ---- Rauch ----
+// Der Rauch hat ein eigenes Gitter: ein Kasten ab Strömungszelle (OX, OY, OZ) mit SNX x SNY x SNZ Rauchzellen,
+// R Rauchzellen je Strömungszelle und Richtung. Die Geschwindigkeit kommt trilinear aus dem Strömungsgitter.
+#define SMOKE_ARGS int SNX, int SNY, int SNZ, int OX, int OY, int OZ, int R
 
-// trilinear in Gitterkoordinaten (Zelle i liegt bei i)
+// trilinear im Strömungsgitter (Zelle i liegt bei i)
 float trilin(__global const float* a, float x, float y, float z)
 {
     x = clamp(x, 0.0f, (float)NX - 1.001f);
@@ -640,35 +699,71 @@ float trilin(__global const float* a, float x, float y, float z)
     return (c00 * (1.0f - fy) + c10 * fy) * (1.0f - fz) + (c01 * (1.0f - fy) + c11 * fy) * fz;
 }
 
-// Rückverfolgung mit der Mittelpunktsregel
-float3 back3(int c, float dt, __global const float* ux, __global const float* uy, __global const float* uz)
+// trilinear im Rauchgitter (Rauchzelle i liegt bei i)
+float trilinS(__global const float* a, float x, float y, float z, int SNX, int SNY, int SNZ)
 {
-    float x = (float)(c % NX), y = (float)((c / NX) % NY), z = (float)(c / (NX * NY));
-    float mx = x - 0.5f * dt * ux[c], my = y - 0.5f * dt * uy[c], mz = z - 0.5f * dt * uz[c];
-    return (float3)(x - dt * trilin(ux, mx, my, mz), y - dt * trilin(uy, mx, my, mz), z - dt * trilin(uz, mx, my, mz));
+    x = clamp(x, 0.0f, (float)SNX - 1.001f);
+    y = clamp(y, 0.0f, (float)SNY - 1.001f);
+    z = clamp(z, 0.0f, (float)SNZ - 1.001f);
+    int x0 = (int)x, y0 = (int)y, z0 = (int)z;
+    float fx = x - (float)x0, fy = y - (float)y0, fz = z - (float)z0;
+    int c = x0 + SNX * (y0 + SNY * z0);
+    int dy = SNX, dz = SNX * SNY;
+    float c00 = a[c] * (1.0f - fx) + a[c + 1] * fx;
+    float c10 = a[c + dy] * (1.0f - fx) + a[c + dy + 1] * fx;
+    float c01 = a[c + dz] * (1.0f - fx) + a[c + dz + 1] * fx;
+    float c11 = a[c + dy + dz] * (1.0f - fx) + a[c + dy + dz + 1] * fx;
+    return (c00 * (1.0f - fy) + c10 * fy) * (1.0f - fz) + (c01 * (1.0f - fy) + c11 * fy) * fz;
+}
+
+// Rauchzellen-Koordinaten -> Strömungsgitter-Koordinaten
+float3 s2f(float3 q, int OX, int OY, int OZ, int R)
+{
+    return (float3)((float)OX, (float)OY, (float)OZ) + (q + 0.5f) / (float)R - 0.5f;
+}
+
+float3 velAt(float3 p, __global const float* ux, __global const float* uy, __global const float* uz)
+{
+    return (float3)(trilin(ux, p.x, p.y, p.z), trilin(uy, p.x, p.y, p.z), trilin(uz, p.x, p.y, p.z));
+}
+
+// Rückverfolgung im Rauchgitter (Mittelpunktsregel); Geschwindigkeit in Strömungszellen je Schritt mal R
+float3 backS(int c, float dt, __global const float* ux, __global const float* uy, __global const float* uz, SMOKE_ARGS)
+{
+    float3 q = (float3)((float)(c % SNX), (float)((c / SNX) % SNY), (float)(c / (SNX * SNY)));
+    float3 u0 = velAt(s2f(q, OX, OY, OZ, R), ux, uy, uz);
+    float3 qm = q - 0.5f * dt * (float)R * u0;
+    float3 u1 = velAt(s2f(qm, OX, OY, OZ, R), ux, uy, uz);
+    return q - dt * (float)R * u1;
+}
+
+bool solidS(int c, __global const uchar* flag, SMOKE_ARGS)
+{
+    int x = OX + (c % SNX) / R, y = OY + ((c / SNX) % SNY) / R, z = OZ + (c / (SNX * SNY)) / R;
+    return flag[x + NX * (y + NY * z)] != 0;
 }
 
 __kernel void smoke3_trace(__global const float* src, __global float* dst, __global const float* ux, __global const float* uy,
-                           __global const float* uz, __global const uchar* flag, float dt)
+                           __global const float* uz, __global const uchar* flag, float dt, SMOKE_ARGS)
 {
     int c = get_global_id(0);
-    if (c >= N) return;
-    if (flag[c] != 0) { dst[c] = 0.0f; return; }
-    float3 b = back3(c, dt, ux, uy, uz);
-    dst[c] = trilin(src, b.x, b.y, b.z);
+    if (c >= SNX * SNY * SNZ) return;
+    if (solidS(c, flag, SNX, SNY, SNZ, OX, OY, OZ, R)) { dst[c] = 0.0f; return; }
+    float3 b = backS(c, dt, ux, uy, uz, SNX, SNY, SNZ, OX, OY, OZ, R);
+    dst[c] = trilinS(src, b.x, b.y, b.z, SNX, SNY, SNZ);
 }
 
 __kernel void smoke3_correct(__global const float* phi, __global const float* hat, __global const float* bar, __global float* dst,
                              __global const float* ux, __global const float* uy, __global const float* uz,
-                             __global const uchar* flag, float dt)
+                             __global const uchar* flag, float dt, SMOKE_ARGS)
 {
     int c = get_global_id(0);
-    if (c >= N) return;
-    if (flag[c] != 0) { dst[c] = 0.0f; return; }
-    float3 b = back3(c, dt, ux, uy, uz);
-    float bx = clamp(b.x, 0.0f, (float)NX - 1.001f), by = clamp(b.y, 0.0f, (float)NY - 1.001f), bz = clamp(b.z, 0.0f, (float)NZ - 1.001f);
-    int k = (int)bx + NX * ((int)by + NY * (int)bz);
-    const int dy = NX, dz = NX * NY;
+    if (c >= SNX * SNY * SNZ) return;
+    if (solidS(c, flag, SNX, SNY, SNZ, OX, OY, OZ, R)) { dst[c] = 0.0f; return; }
+    float3 b = backS(c, dt, ux, uy, uz, SNX, SNY, SNZ, OX, OY, OZ, R);
+    float bx = clamp(b.x, 0.0f, (float)SNX - 1.001f), by = clamp(b.y, 0.0f, (float)SNY - 1.001f), bz = clamp(b.z, 0.0f, (float)SNZ - 1.001f);
+    int k = (int)bx + SNX * ((int)by + SNY * (int)bz);
+    int dy = SNX, dz = SNX * SNY;
     float lo = phi[k], hi = phi[k];
     int nb[7] = { 1, dy, dy + 1, dz, dz + 1, dz + dy, dz + dy + 1 };
     for (int i = 0; i < 7; i++) { float v = phi[k + nb[i]]; lo = fmin(lo, v); hi = fmax(hi, v); }
@@ -676,8 +771,8 @@ __kernel void smoke3_correct(__global const float* phi, __global const float* ha
     dst[c] = clamp(v, lo, hi);
 }
 
-// Düsen: an jedem Quellpunkt eine kleine, weich auslaufende Kugel Rauch nachfüllen
-__kernel void smoke3_inject(__global float* phi, __global const uchar* flag, __global const float4* pts, int count, int r, float radius)
+// Düsen: an jedem Quellpunkt (Rauchzellen-Koordinaten) eine kleine, weich auslaufende Kugel Rauch nachfüllen
+__kernel void smoke3_inject(__global float* phi, __global const uchar* flag, __global const float4* pts, int count, int r, float radius, SMOKE_ARGS)
 {
     int j = get_global_id(0);
     int k = 2 * r + 1, kk = k * k * k;
@@ -685,24 +780,24 @@ __kernel void smoke3_inject(__global float* phi, __global const uchar* flag, __g
     float4 p = pts[j / kk];
     int o = j % kk;
     int x = (int)round(p.x) + o % k - r, y = (int)round(p.y) + (o / k) % k - r, z = (int)round(p.z) + o / (k * k) - r;
-    if (x < 1 || y < 0 || z < 0 || x >= NX || y >= NY || z >= NZ) return;
-    int c = x + NX * (y + NY * z);
-    if (flag[c] != 0) return;
+    if (x < 0 || y < 0 || z < 0 || x >= SNX || y >= SNY || z >= SNZ) return;
+    int c = x + SNX * (y + SNY * z);
+    if (solidS(c, flag, SNX, SNY, SNZ, OX, OY, OZ, R)) return;
     float d = length((float3)((float)x - p.x, (float)y - p.y, (float)z - p.z));
     float v = clamp((radius - d) / 0.6f + 0.5f, 0.0f, 1.0f);
     if (v > phi[c]) phi[c] = v;
 }
 
-__kernel void smoke3_clear(__global float* a)
+__kernel void smoke3_clear(__global float* a, int count)
 {
     int c = get_global_id(0);
-    if (c < N) a[c] = 0.0f;
+    if (c < count) a[c] = 0.0f;
 }
 
-// Volumen-Darstellung: Strahl je Bildpunkt durch den Kanal, Rauch verschluckt und streut Licht (von vorn nach hinten).
+// Volumen-Darstellung: Strahl je Bildpunkt durch den Rauchkasten, Rauch verschluckt und streut Licht (von vorn nach hinten).
 __kernel void smoke3_render(__global const float* phi, __global const float* invDepth, __global uchar4* img, int W, int H,
                             float cx, float cy, float cz, float fx, float fy, float fz, float rx, float ry, float rz,
-                            float ux, float uy, float uz, float focal, float cr, float cg, float cb, float sigma)
+                            float ux, float uy, float uz, float focal, float cr, float cg, float cb, float sigma, SMOKE_ARGS)
 {
     int p = get_global_id(0);
     if (p >= W * H) return;
@@ -711,9 +806,11 @@ __kernel void smoke3_render(__global const float* phi, __global const float* inv
     float3 f = (float3)(fx, fy, fz);
     float3 d = normalize(f + sx * (float3)(rx, ry, rz) - sy * (float3)(ux, uy, uz));
     float3 o = (float3)(cx, cy, cz);
-    // Schnitt mit dem Kanal [0,NX] x [0,NY] x [0,NZ]
+    // Schnitt mit dem Rauchkasten (in Strömungszellen)
+    float3 bmin = (float3)((float)OX, (float)OY, (float)OZ);
+    float3 bmax = bmin + (float3)((float)SNX, (float)SNY, (float)SNZ) / (float)R;
     float3 inv = 1.0f / d;
-    float3 t0 = (0.0f - o) * inv, t1 = ((float3)((float)NX, (float)NY, (float)NZ) - o) * inv;
+    float3 t0 = (bmin - o) * inv, t1 = (bmax - o) * inv;
     float3 tmin = fmin(t0, t1), tmax = fmax(t0, t1);
     float tn = fmax(fmax(tmin.x, tmin.y), fmax(tmin.z, 0.0f)), tf = fmin(fmin(tmax.x, tmax.y), tmax.z);
     float iz = invDepth[p];
@@ -722,18 +819,19 @@ __kernel void smoke3_render(__global const float* phi, __global const float* inv
     float alpha = 0.0f;
     if (tf > tn)
     {
-        const float step = 0.5f;
+        float step = 0.5f / (float)R;   // eine halbe Rauchzelle
         // kleiner, je Bildpunkt verschiedener Versatz gegen Streifenmuster
         float hs = sin((float)p * 12.9898f) * 43758.5453f;
         float jitter = hs - floor(hs);
         for (float t = tn + jitter * step; t < tf && alpha < 0.995f; t += step)
         {
-            float3 q = o + t * d - 0.5f;
-            float rho = trilin(phi, q.x, q.y, q.z);
+            float3 w = o + t * d;
+            float3 q = (w - bmin) * (float)R - 0.5f;
+            float rho = trilinS(phi, q.x, q.y, q.z, SNX, SNY, SNZ);
             if (rho < 0.002f) continue;
             float a = 1.0f - exp(-sigma * rho * step);
             // etwas Licht von oben, damit der Rauch Form bekommt
-            float light = 0.78f + 0.22f * clamp(q.z / (float)NZ, 0.0f, 1.0f);
+            float light = 0.78f + 0.22f * clamp(w.z / (float)NZ, 0.0f, 1.0f);
             acc += (1.0f - alpha) * a * light * (float3)(cr, cg, cb);
             alpha += (1.0f - alpha) * a;
         }

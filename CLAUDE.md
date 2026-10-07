@@ -15,7 +15,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   ändert keinen 2D-Code. Gemeinsames lieber nach `App3D` kopieren als das 2D-Original umbauen.
   Einzige Berührungspunkte: Umschalter "2D | 3D" im Kopf von `MainForm` und die Fensterwechsel in `Program.cs`.
 - `Lbm3D.cs`: D3Q19-BGK-Löser auf der GPU (eigener OpenCL-Zugriff), nur GPU, kein CPU-Fallback (so gewollt).
-  Kräfte per Impulsaustausch relativ zum Umgebungsdruck. Stabil bis etwa tau 0,52, darum Re im Fenster begrenzt.
+  Kräfte per Impulsaustausch relativ zum Umgebungsdruck. Turbulenzmodell LES (Smagorinsky, Konstante wie FluidX3D):
+  an der Kugel bis Re 1 Mio. stabil, Cd plausibel (Re 400: 0,65; Re 1e5: 0,44). uIn bleibt 0,05 (0,08 verfälscht Cd).
   Leistung: Verteilungen als FP16 gespeichert (f - W, gerechnet in FP32) = ~1,9x schneller, halber Speicher;
   FP16 weicht < 0,5 % von FP32 ab (Test3D prüft das). Auslass mit festem Druck (Dichte 1), sonst driftet die Masse.
   Kraftsumme nur im letzten Schritt eines Pakets, Rauch-Geschwindigkeit wird im Strömungsschritt mitgeschrieben.
@@ -26,7 +27,7 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   `Placement` dreht/skaliert/setzt den Körper und wandelt ihn in Zellen um (Strahl-Parität entlang x).
 - `Scene.cs`: eigener Software-Renderer für die 3D-Ansicht (Tiefenpuffer, Kantenglättung, alle CPU-Kerne).
 - `Flow3D.cs`: grobes Geschwindigkeitsfeld von der GPU (`Lbm3D.ReadVelocity`), Stromlinien (RK2), Rauchrechen (Kreuzform).
-- Rauch: echtes Dichtefeld in voller Auflösung auf der GPU (`Lbm3D.SmokeOn`, semi-Lagrange + MacCormack wie in 2D,
+- Rauch: echtes Dichtefeld auf eigenem Gitter (Kasten um Körper + Nachlauf, `SetSmokeBox`, meist 2x feiner) auf der GPU (`Lbm3D.SmokeOn`, semi-Lagrange + MacCormack wie in 2D,
   alle 2 Strömungsschritte), als Volumen gezeichnet (`RenderSmoke`, Strahlen mit Tiefe aus `Scene.Overlay`).
 - `Form3D.cs`: 3D-Fenster. Achsen: x = Strömung, y = seitlich, z = oben. Darstellung: Stromlinien, Rauch,
   Schnittebene im Raum, nur Körper. Geladene Modelle werden automatisch ausgerichtet (`Mesh.AutoOrient`:

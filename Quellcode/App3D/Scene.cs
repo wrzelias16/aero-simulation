@@ -45,6 +45,9 @@ namespace Windkanal3D
         // Kamera-Basis (für die Projektion)
         double cx, cy, cz, rx, ry, rz, ux, uy, uz, fx, fy, fz, focal, tx, ty, tz;
 
+        /// <summary>Blickziel (Mitte und Größe in Zellen); null = ganzer Kanal. Zeigt beim Start den Körper formatfüllend.</summary>
+        public double[] Focus;
+
         public void ResetCamera() { Yaw = -2.35; Pitch = 0.42; Distance = 1.0; PanX = PanY = 0; }
 
         /// <summary>Bild in der Größe w x h zeichnen. quality = 2 glättet Kanten (4-fache Arbeit), 1 = schnell beim Drehen.</summary>
@@ -121,7 +124,8 @@ namespace Windkanal3D
 
         void SetupCamera()
         {
-            double size = Math.Sqrt((double)NX * NX + NY * NY + NZ * NZ);
+            double size = Focus != null ? Focus[3] : Math.Sqrt((double)NX * NX + NY * NY + NZ * NZ);
+            double cx0 = Focus != null ? Focus[0] : NX / 2.0, cy0 = Focus != null ? Focus[1] : NY / 2.0, cz0 = Focus != null ? Focus[2] : NZ / 2.0;
             double dist = size * 1.4 * Distance;
             // Blickziel: Kanalmitte, verschoben in der Bildebene
             double ox = Math.Cos(Pitch) * Math.Cos(Yaw), oy = Math.Cos(Pitch) * Math.Sin(Yaw), oz = Math.Sin(Pitch);
@@ -130,9 +134,9 @@ namespace Windkanal3D
             double rl = Math.Sqrt(rx * rx + ry * ry); if (rl < 1e-9) { rx = 1; ry = 0; rl = 1; }
             rx /= rl; ry /= rl;
             ux = ry * fz - rz * fy; uy = rz * fx - rx * fz; uz = rx * fy - ry * fx;
-            tx = NX / 2.0 + (rx * PanX + ux * PanY) * size;
-            ty = NY / 2.0 + (ry * PanX + uy * PanY) * size;
-            tz = NZ / 2.0 + (rz * PanX + uz * PanY) * size;
+            tx = cx0 + (rx * PanX + ux * PanY) * size;
+            ty = cy0 + (ry * PanX + uy * PanY) * size;
+            tz = cz0 + (rz * PanX + uz * PanY) * size;
             cx = tx + ox * dist; cy = ty + oy * dist; cz = tz + oz * dist;
             focal = Math.Min(sw, sh * 1.6) * 0.95;
         }
