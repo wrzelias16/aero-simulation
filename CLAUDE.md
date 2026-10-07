@@ -76,7 +76,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## Bauen und Testen
 - Bauen (ohne SDK, nutzt csc aus .NET Framework 4.8):
   `powershell -ExecutionPolicy Bypass -File Quellcode\build.ps1` -> `Quellcode\bin\Windkanal2D.exe`
-- Installer: `Quellcode/Setup` (erzeugt `Windkanal2D-Setup.exe`), im Programm-Design: wird mit `App/Ui.cs`, `App/FlowStage.cs`,
+- Installer: `Quellcode/Setup` (erzeugt **eine** Datei `Windkanal-Setup.exe` = Installer + Deinstaller; Zielordner wählbar
+  mit moderner Ordnerauswahl, Neustart mit Adminrechten für z. B. `Programme`, Ordner steht in `InstallLocation`), im Programm-Design: wird mit `App/Ui.cs`, `App/FlowStage.cs`,
   `App/AppInfo.cs` (+ Abhängigkeiten) und den Outfit-Schriften gebaut. Rückfragen im Fenster statt Meldungsfenster.
   Anzeige „Windkanal“, Ordner/Registry/exe behalten die alten Namen (Windkanal2D), damit Updates die Installation finden.
 - Versionsnummer an einer Stelle: `App/AppInfo.cs` (Startfenster, Installer, Windows-Apps-Eintrag).

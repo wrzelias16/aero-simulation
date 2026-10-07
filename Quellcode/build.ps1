@@ -116,6 +116,10 @@ $setup = Join-Path $bin 'Setup.exe'
     (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') (Join-Path $root 'App\Models.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Setup-Build fehlgeschlagen' }
 
-Copy-Item $setup (Join-Path $dist 'Windkanal2D-Setup.exe') -Force
-Copy-Item $setup (Join-Path $dist 'Windkanal2D-Deinstallieren.exe') -Force
+# Eine Datei für alles: installiert, und als „Deinstallieren.exe“ im Programmordner entfernt sie wieder.
+Copy-Item $setup (Join-Path $dist 'Windkanal-Setup.exe') -Force
+foreach ($old in 'Windkanal2D-Setup.exe', 'Windkanal2D-Deinstallieren.exe') {
+    $p = Join-Path $dist $old
+    if (Test-Path $p) { Remove-Item $p -Force }   # alte Namen aufräumen
+}
 Write-Host "Fertig: $dist"
