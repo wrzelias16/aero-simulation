@@ -10,12 +10,13 @@ namespace Windkanal
 {
     public sealed class MainForm : Form
     {
-        static readonly int[] ResNX = { 400, 600, 900, 1200 };
-        static readonly int[] ResNY = { 160, 240, 360, 480 };
+        static readonly int[] ResNX = { 400, 600, 900, 1200, 1600, 2400 };
+        static readonly int[] ResNY = { 160, 240, 360, 480, 640, 960 };
         static readonly string[] ResNames =
         {
             "Niedrig (400 × 160) – schnell", "Mittel (600 × 240)",
-            "Hoch (900 × 360)", "Sehr hoch (1200 × 480) – genau"
+            "Hoch (900 × 360)", "Sehr hoch (1200 × 480) – genau",
+            "Ultra (1600 × 640)", "Extrem (2400 × 960) – feinste Details"
         };
 
         const double NuAir = 1.516e-5;   // m²/s bei 20 °C

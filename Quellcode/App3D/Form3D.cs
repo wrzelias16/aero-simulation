@@ -16,8 +16,8 @@ namespace Windkanal3D
     /// </summary>
     public sealed class Form3D : Form
     {
-        static readonly int[,] Res = { { 160, 64, 64 }, { 256, 112, 112 }, { 384, 160, 160 }, { 512, 224, 224 }, { 640, 288, 288 } };
-        static readonly string[] ResNames = { "Niedrig", "Mittel", "Hoch", "Sehr hoch", "Ultra" };
+        static readonly int[,] Res = { { 160, 64, 64 }, { 256, 112, 112 }, { 384, 160, 160 }, { 512, 224, 224 }, { 640, 288, 288 }, { 704, 320, 320 } };
+        static readonly string[] ResNames = { "Niedrig", "Mittel", "Hoch", "Sehr hoch", "Ultra", "Extrem" };
         static readonly CultureInfo De = CultureInfo.GetCultureInfo("de-DE");
         const float UIn = 0.05f;
         const double TauMin = 0.50001;   // mit Turbulenzmodell (LES) bis Re ~ 1 Mio. stabil (getestet an der Kugel)

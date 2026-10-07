@@ -275,6 +275,14 @@ static class Vorschau3D
                     break;
                 case 9:
                     Save(f2, Path.Combine(dir, "fenster_2d_gross.png"));
+                    // feinstes Gitter: läuft es, und wie flüssig ist die Anzeige?
+                    ((Windkanal.Toggle)Field(f2, "chkCompare")).Checked = false;
+                    ((Windkanal.DropDown)Field(f2, "cbRes")).SelectedIndex = 5;
+                    t2.Interval = 25000;   // feines Gitter läuft in Echtzeit langsamer ein
+                    break;
+                case 10:
+                    Save(f2, Path.Combine(dir, "fenster_2d_extrem.png"));
+                    Console.WriteLine("[OK]     2D Extrem: " + Field(f2, "fps") + " Bilder/s, " + Field(f2, "mlups") + " MLUPS");
                     t2.Interval = 100;
                     break;
                 default:

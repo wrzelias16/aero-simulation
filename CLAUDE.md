@@ -45,6 +45,9 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## 2D: bewegliche Teile
 - Modellformat kann bewegliche Teile (`bewegung: x y grad` am Teil, `bewegung-name/-dauer/-tempo`, `bezug-meter`).
   Dauer in Rechenschritten = gleich viele Überströmungen der Bezugslänge wie am echten Auto.
+- Eigene Kategorie „Animiert · Klappen & aktive Aero“ (DRS-Flügel, Macarena, F1 mit DRS, F1 2026 mit aktiver Aero
+  [Front- und Heckflügel, Winkel der Front-Flaps angenommen], Flügel mit ausfahrender Landeklappe [18 s, 25°]).
+- Gitter 2D bis „Extrem“ 2400 × 960 (RTX 5070 Ti: ~2800 Schritte/s, Anzeige ~30 FPS); 3D bis „Extrem“ 704 × 320 × 320.
 - Knopf „Neu“ löscht eigene Zeichnungen (zurück zum Modell, auf das gezeichnet wurde, sonst leere Fläche).
 - Modelle: Heckflügel mit DRS (2025: < 400 ms, 85 mm, Art. 3.10.10), Heckflügel 2026 „Macarena“ (Ferrari SF-26,
   Flap dreht 180°; Drehpunkt Sehnenmitte = Annahme), F1-Wagen mit animiertem DRS. Knopf im Strömungsbild, Taste D.

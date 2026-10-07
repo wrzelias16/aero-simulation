@@ -277,6 +277,7 @@ write(R, 'darrieus', 'Vertikalachsen-Windrad (H-Rotor)',
 
 # ====================================================================== Formel 1
 F1 = 'Formel 1'
+ANIM = 'Animiert · Klappen & aktive Aero'   # alle Modelle mit beweglichen Teilen (Knopf im Strömungsbild, Taste D)
 s1223 = load_profile('s1223')
 def stack(elements, gaps, mirror=True):
     """Mehrteiliger umgedrehter Flügel: Element i+1 sitzt mit Spalt gaps[i] hinter und über der Hinterkante von Element i.
@@ -342,7 +343,7 @@ DRS_SRC = ('Selig S1223 umgedreht (UIUC-Datenbank); DRS-Schlitz offen 85 mm, Wec
            '(Art. 3.10.10); Flap dreht um ihre Hinterkante; Anordnung ' + OWN)
 def motion_extra(name, seconds, kmh, ref_m):
     return ['bewegung-name: ' + name, 'bewegung-dauer: ' + f(seconds), 'bewegung-tempo: ' + f(kmh), 'bezug-meter: ' + f(ref_m)]
-write(F1, 'f1-heckfluegel-drs', 'Heckflügel mit DRS (animiert, 2025)',
+write(ANIM, 'f1-heckfluegel-drs', 'Heckflügel mit DRS (animiert, 2025)',
       'Knopf „DRS öffnen“ oder Taste D: die Flap öffnet in 0,4 s (bei 300 km/h) bis zum 85-mm-Schlitz.',
       DRS_SRC, UIUC_LIC, 'Flügeltiefe', 34,
       [('Hauptblatt', rw_l[0]), ('Flap', rw_l[1] + ['bewegung: %s %s %s' % (f(te[0]), f(te[1]), f(a_open + 38.0))])],
@@ -350,7 +351,7 @@ write(F1, 'f1-heckfluegel-drs', 'Heckflügel mit DRS (animiert, 2025)',
 # Macarena (Ferrari 2026): die Flap dreht sich um 180° nach hinten und steht danach auf dem Kopf.
 # Lage des Drehpunkts ist nicht veröffentlicht; Annahme: Mitte der Flap-Sehne.
 mc = (fx + 0.21 * math.cos(math.radians(-38)), fy - 0.21 * math.sin(math.radians(-38)))
-write(F1, 'f1-heckfluegel-macarena', 'Heckflügel 2026 mit „Macarena“-Flap (animiert)',
+write(ANIM, 'f1-heckfluegel-macarena', 'Heckflügel 2026 mit „Macarena“-Flap (animiert)',
       'Ferrari 2026, Knopf „Geraden-Modus an“: die Flap dreht sich in 0,4 s um 180° nach hinten.',
       'Prinzip nach Berichten zum Ferrari SF-26 (Testfahrten Bahrain 2026); aktive Aerodynamik, Wechsel höchstens 400 ms nach FIA-Reglement 2026 '
       '(Art. 3.11.6); Drehpunkt in der Sehnenmitte und Flügelform angenommen (nicht veröffentlicht); Selig S1223 umgedreht (UIUC-Datenbank)',
@@ -402,7 +403,16 @@ ca_open = solve_gap(mk_copen, 85 / 500, -38.0, 5.0)
 car_rw_open = prof_lines('profil: s1223', 0.42, ca_open, cte[0] - 0.42 * math.cos(math.radians(ca_open)), cte[1] + 0.42 * math.sin(math.radians(ca_open)), True)
 car_bw_p, car_bw_l = stack([('e423', load_profile('e423'), 0.55, -2, 0), ('e423', load_profile('e423'), 0.45, -20, 0.03)], [45 / 330])
 
-def f1_car(drs_open, motion=None):
+def te_of(lines):
+    """Hinterkante eines Profilteils aus sehne/winkel/lage (Formgröße-Koordinaten, Sinn wie im Loader)."""
+    c, a, x, y = 1.0, 0.0, 0.0, 0.0
+    for l in lines:
+        if l.startswith('sehne:'): c = float(l.split(':')[1])
+        elif l.startswith('winkel:'): a = float(l.split(':')[1])
+        elif l.startswith('lage:'): x, y = [float(v) for v in l.split(':')[1].split()]
+    return (x + c * math.cos(math.radians(a)), y - c * math.sin(math.radians(a)))
+
+def f1_car(drs_open, motion=None, moves=None):
     parts = [('Karosserie', pts_lines(body, corners=body_c, smooth=5)),
              ('Halo vorn', halo), ('Halo oben', halo2),
              ('Vorderrad', ['kreis: %s %s %s 96' % (f(1150 / MM), f(R_WH), f(R_WH))]),
@@ -410,7 +420,11 @@ def f1_car(drs_open, motion=None):
     # Frontflügel: 620 mm tief, Vorderkante bei x = 0, 85 mm über der Bahn
     s = 620 / MM
     for (nm_, l) in zip(['Frontflügel Hauptblatt', 'Frontflügel Flap 1', 'Frontflügel Flap 2'], car_fw_l):
-        parts.append((nm_, scale_lines(l, s, 0, 85 / MM)))
+        lines = scale_lines(l, s, 0, 85 / MM)
+        if moves and nm_ in moves:
+            tx, ty = te_of(lines)
+            lines.append('bewegung: %s %s %s' % (f(tx), f(ty), f(moves[nm_])))
+        parts.append((nm_, lines))
     # Heckflügel: 500 mm tief, Vorderkante bei x = 5060, 790 mm hoch
     s = 500 / MM
     rl = car_rw_l if not drs_open else [car_rw_l[0], car_rw_open]
@@ -446,11 +460,37 @@ write(F1, 'f1-komplett', 'Formel-1-Wagen komplett (DRS zu)',
 write(F1, 'f1-komplett-drs', 'Formel-1-Wagen komplett (DRS offen)',
       'Wie oben, aber mit geöffnetem DRS-Schlitz am Heckflügel: Vergleich von Abtrieb und Widerstand.',
       F1_SRC, OWN_LIC, 'Stirnhöhe', 55, f1_car(True), re=1000, detail=45 / MM, boden=True, note=NOTE_F1)
-write(F1, 'f1-komplett-drs-animiert', 'Formel-1-Wagen mit DRS (animiert)',
+write(ANIM, 'f1-komplett-drs-animiert', 'Formel-1-Wagen mit DRS (animiert)',
       'Ganzes Auto, Knopf „DRS öffnen“ oder Taste D: das DRS öffnet in 0,4 s (bei 300 km/h).',
       F1_SRC + '; DRS-Wechsel in weniger als 400 ms (Reglement 2025, Art. 3.10.10)', OWN_LIC, 'Stirnhöhe', 55,
       f1_car(False, (cte, ca_open + 38.0)), re=1000, detail=45 / MM, boden=True, note=NOTE_F1,
       extra=motion_extra('DRS', 0.4, 300, 0.95))
+
+# 2026: aktive Aerodynamik am ganzen Auto – Front- und Heckflügel gehen gleichzeitig in den Geraden-Modus (X-Modus).
+# Front-Flaps flacher (um ihre Hinterkante), Heck-Flap öffnet wie beim DRS; Wechsel höchstens 400 ms (Art. 3.10.10 / 3.11.6).
+write(ANIM, 'f1-komplett-2026-aktiv', 'Formel-1-Wagen 2026 mit aktiver Aero (animiert)',
+      'Front- und Heckflügel schalten gemeinsam in 0,4 s in den Geraden-Modus: weniger Widerstand auf der Geraden.',
+      F1_SRC + '; aktive Aerodynamik 2026: Front- und Heckflügel verstellbar, Wechsel höchstens 400 ms (FIA-Reglement 2026, '
+      'Art. 3.10.10 und 3.11.6); Winkel der Front-Flaps im Geraden-Modus angenommen', OWN_LIC, 'Stirnhöhe', 55,
+      f1_car(False, (cte, ca_open + 38.0), {'Frontflügel Flap 1': 10.0, 'Frontflügel Flap 2': 18.0}),
+      re=1000, detail=45 / MM, boden=True, note=NOTE_F1, extra=motion_extra('Geraden-Modus', 0.4, 300, 0.95))
+
+# Flugzeug: Landeklappe fährt aus (Spaltklappe wie im Modell „spaltklappe“, eingefahren unter der Hinterkante,
+# dreht um einen Gelenkpunkt unter dem Flügel um 25° nach unten). Dauer typisch 15–20 s im Anflug.
+def rot_ccw(px, py, hx, hy, deg):
+    a = math.radians(deg)
+    dx, dy = px - hx, py - hy
+    return hx + dx * math.cos(a) - dy * math.sin(a), hy + dx * math.sin(a) + dy * math.cos(a)
+HINGE = (0.62, -0.20)
+ext_le = (0.69, -0.052)
+ret_le = rot_ccw(ext_le[0], ext_le[1], HINGE[0], HINGE[1], 25)   # eingefahren = ausgefahren 25° zurückgedreht
+write(ANIM, 'landeklappe-animiert', 'Flügel mit ausfahrender Landeklappe (animiert)',
+      'Knopf „Landeklappe an“: die Spaltklappe fährt in 18 s um 25° aus, Auftrieb und Widerstand steigen wie im Landeanflug.',
+      OWN + ' (Profile nach NACA-Formeln); Klappe dreht um einen Gelenkpunkt unter dem Flügel (vereinfachter Klappenmechanismus)',
+      OWN_LIC, 'Sehnenlänge', 40,
+      [('Hauptflügel', prof_lines('naca: 2413 160', 0.78)),
+       ('Klappe', prof_lines('naca: 4415 120', 0.30, 0.0, ret_le[0], ret_le[1]) + ['bewegung: %s %s 25' % (f(HINGE[0]), f(HINGE[1]))])],
+      winkel=5, detail=0.02, drehpunkt=(0.25, 0), extra=motion_extra('Landeklappe', 18, 280, 4.0))
 
 # ====================================================================== Straßenfahrzeuge
 V = 'Straßenfahrzeuge'
