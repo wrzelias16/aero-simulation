@@ -93,6 +93,7 @@ namespace Windkanal3D
         FlatButton btnRotX, btnRotY, btnRotZ, btnFlip, btnAuto;
         FlatButton btnRun, btnReset, btnTheme, btnLoad;
         Card cardView, cardRes, cardSet;
+        ScrollPanel setScroll;
         ViewCanvas view;
         Canvas sliceView;
         DropDown cbModel, cbRes;
@@ -211,12 +212,14 @@ namespace Windkanal3D
             // --- Einstellungen
             cardSet = new Card("Einstellungen");
             // Breite so, dass auch mit senkrechter Bildlaufleiste nichts abgeschnitten wird (keine waagrechte Leiste)
-            int y = Card.Head, w = RightW - 2 * Card.Pad - SystemInformation.VerticalScrollBarWidth + 6;
+            setScroll = new ScrollPanel();
+            cardSet.Controls.Add(setScroll);
+            int y = 2, w = RightW - 2 * Card.Pad - SystemInformation.VerticalScrollBarWidth + 6;
             Func<Control, int, int, Control> add = (c, h, gap) =>
             {
                 c.BackColor = Theme.Card;
                 c.SetBounds(Card.Pad, y, w, h);
-                cardSet.Controls.Add(c);
+                setScroll.Controls.Add(c);
                 y += h + gap;
                 return c;
             };
@@ -248,7 +251,7 @@ namespace Windkanal3D
                 rotBtns[i].BackColor = Theme.Card;
                 rotBtns[i].SetBounds(bx, y, bws[i], 40);
                 bx += bws[i] + 6;
-                cardSet.Controls.Add(rotBtns[i]);
+                setScroll.Controls.Add(rotBtns[i]);
             }
             y += 48;
             tips.SetToolTip(btnRotX, "Um die Strömungsrichtung kippen (90°)");
@@ -286,8 +289,8 @@ namespace Windkanal3D
             numKmh.ValueChanged += delegate { ApplyRealSpeed(); };
             tips.SetToolTip(numKmh, "Geschwindigkeit des echten Objekts. Daraus folgt die Reynoldszahl; die Kräfte in der Karte „Kennzahlen“ gelten für dieses Tempo.");
             tips.SetToolTip(numMeters, "Echte Länge des Objekts in Strömungsrichtung");
-            cardSet.Controls.Add(numMeters);
-            cardSet.Controls.Add(numKmh);
+            setScroll.Controls.Add(numMeters);
+            setScroll.Controls.Add(numKmh);
             y += 48;
             cbRes = (DropDown)add(new DropDown(), 40, 12);
             for (int i = 0; i < ResNames.Length; i++)
@@ -315,10 +318,7 @@ namespace Windkanal3D
             Controls.AddRange(new Control[] { cardView, cardRes, cardSet });
             fileMenu = new FileMenu(this, cardView, SaveSession, LoadSession, ShowWarning);
             // Einstellungen: bei niedrigen Fenstern mit Bildlaufleiste statt abgeschnitten
-            cardSet.AutoScroll = true;
-            cardSet.AutoScrollMargin = new Size(0, Card.Pad);
-            cardSet.Scroll += delegate { cardSet.Invalidate(); };
-            cardSet.HandleCreated += delegate { Theme.ThemeScrollbars(cardSet.Handle); };
+
             ResumeLayout();
             LayoutAll();
             UpdateLabels();
@@ -394,6 +394,7 @@ namespace Windkanal3D
             sliceView.SetBounds(cardRes.Width - Card.Pad - sw, Card.Head - 2, sw, BottomH - Card.Head - 10);
 
             cardSet.SetBounds(rx, TopH, RightW, bottom - TopH);
+            setScroll.SetBounds(0, Card.Head, cardSet.Width, cardSet.Height - Card.Head - 10);
             sceneDirty = true;
             Invalidate();
         }
@@ -472,7 +473,7 @@ namespace Windkanal3D
         {
             foreach (Control c in parent.Controls)
             {
-                c.BackColor = parent is Card ? Theme.Card : Theme.Bg;
+                c.BackColor = parent is Card || parent is ScrollPanel ? Theme.Card : Theme.Bg;
                 if (c is Painted) c.ForeColor = Theme.Text;
                 Recolor(c);
             }

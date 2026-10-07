@@ -216,9 +216,18 @@ static class Vorschau3D
                         t2.Interval = 1500;
                     }
                     break;
+                case 5:
+                    Save(f2, Path.Combine(dir, "fenster_2d_klein.png"));
+                    // Einstellungen mit dem Mausrad ganz nach unten scrollen (Rahmen muss sauber bleiben)
+                    {
+                        var set = (Control)Field(f2, "setScroll");
+                        for (int k = 0; k < 10; k++) SendMessage(set.Handle, 0x20A, (IntPtr)((-120) << 16), IntPtr.Zero);
+                    }
+                    t2.Interval = 800;
+                    break;
                 default:
                     t2.Stop();
-                    Save(f2, Path.Combine(dir, "fenster_2d_klein.png"));
+                    Save(f2, Path.Combine(dir, "fenster_2d_klein_gescrollt.png"));
                     f2.Close();
                     break;
             }
@@ -230,6 +239,9 @@ static class Vorschau3D
         Console.WriteLine(fails == 0 ? "ALLE TESTS BESTANDEN" : fails + " TEST(S) DURCHGEFALLEN");
         return fails == 0 ? 0 : 1;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wp, IntPtr lp);
 
     static object Field(object o, string name)
     {

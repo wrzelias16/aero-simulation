@@ -344,6 +344,51 @@ namespace Windkanal
         }
     }
 
+    /// <summary>
+    /// Zeichnet eine scrollende Karte nach jedem Bildlauf neu. Ohne das bleiben beim Scrollen mit dem Mausrad
+    /// Reste von Rahmen und Ecken stehen (das Rad löst kein Scroll-Ereignis aus).
+    /// </summary>
+    sealed class ScrollRepaint : NativeWindow
+    {
+        readonly Control target;
+
+        ScrollRepaint(Control c)
+        {
+            target = c;
+            AssignHandle(c.Handle);
+            c.HandleDestroyed += delegate { ReleaseHandle(); };
+        }
+
+        public static void Attach(Control c)
+        {
+            if (c.IsHandleCreated) new ScrollRepaint(c);
+            else c.HandleCreated += delegate { new ScrollRepaint(c); };
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            // WM_HSCROLL, WM_VSCROLL, WM_MOUSEWHEEL
+            if (m.Msg == 0x114 || m.Msg == 0x115 || m.Msg == 0x20A) target.Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// Scrollbereich in einer Karte: Titel und Rahmen der Karte bleiben stehen, nur der Inhalt darunter scrollt.
+    /// </summary>
+    sealed class ScrollPanel : Panel
+    {
+        public ScrollPanel()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            AutoScroll = true;
+            AutoScrollMargin = new Size(0, 12);
+            BackColor = Theme.Card;
+            ScrollRepaint.Attach(this);
+            HandleCreated += delegate { Theme.ThemeScrollbars(Handle); };
+        }
+    }
+
     /// <summary>Schaltfläche als Pille (schwarz = Hauptaktion) oder runder Symbolknopf.</summary>
     sealed class FlatButton : Painted
     {

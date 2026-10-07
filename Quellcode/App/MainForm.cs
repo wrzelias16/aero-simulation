@@ -37,6 +37,7 @@ namespace Windkanal
 
         // Oberfläche: Karten auf hellem bzw. dunklem Grund
         Card cardView, cardRes, cardSet;
+        ScrollPanel setScroll;
         Canvas view;
         Segmented segView, segMode;
         // Bewegliche Teile (DRS, Macarena): Stand 0 = Ausgangslage, 1 = Ende; Richtung +1 öffnet, -1 schließt
@@ -217,12 +218,14 @@ namespace Windkanal
             // --- Einstellungen
             cardSet = new Card("Einstellungen");
             // Breite so, dass auch mit senkrechter Bildlaufleiste nichts abgeschnitten wird (keine waagrechte Leiste)
-            int y = Card.Head, w = RightW - 2 * Card.Pad - SystemInformation.VerticalScrollBarWidth + 6;
+            setScroll = new ScrollPanel();
+            cardSet.Controls.Add(setScroll);
+            int y = 2, w = RightW - 2 * Card.Pad - SystemInformation.VerticalScrollBarWidth + 6;
             Func<Control, int, int, Control> add = (c, h, gap) =>
             {
                 c.BackColor = Theme.Card;
                 c.SetBounds(Card.Pad, y, w, h);
-                cardSet.Controls.Add(c);
+                setScroll.Controls.Add(c);
                 y += h + gap;
                 return c;
             };
@@ -317,10 +320,7 @@ namespace Windkanal
             Controls.AddRange(new Control[] { cardView, cardRes, cardSet });
             fileMenu = new FileMenu(this, cardView, SaveSession, LoadSession, ShowMessage);
             // Einstellungen: bei niedrigen Fenstern mit Bildlaufleiste statt abgeschnitten
-            cardSet.AutoScroll = true;
-            cardSet.AutoScrollMargin = new Size(0, Card.Pad);
-            cardSet.Scroll += delegate { cardSet.Invalidate(); };
-            cardSet.HandleCreated += delegate { Theme.ThemeScrollbars(cardSet.Handle); };
+
             ResumeLayout();
             LayoutAll();
             UpdateModelHint();
@@ -365,6 +365,7 @@ namespace Windkanal
 
             // rechts: Einstellungen über die ganze Höhe (scrollt bei kleinen Fenstern)
             cardSet.SetBounds(rx, TopH, RightW, bottom - TopH);
+            setScroll.SetBounds(0, Card.Head, cardSet.Width, cardSet.Height - Card.Head - 10);
             Invalidate();
         }
 
@@ -448,7 +449,7 @@ namespace Windkanal
             foreach (Control c in parent.Controls)
             {
                 if (c is TextBox) continue;
-                c.BackColor = parent is Card || c == view ? Theme.Card : c is NumberBox ? Theme.Card : Theme.Bg;
+                c.BackColor = parent is Card || parent is ScrollPanel || c == view ? Theme.Card : c is NumberBox ? Theme.Card : Theme.Bg;
                 if (c is Painted) c.ForeColor = Theme.Text;
                 if (c is NumberBox) ((NumberBox)c).Recolor();
                 Recolor(c);
@@ -641,11 +642,12 @@ namespace Windkanal
         void UpdateCompareControls()
         {
             if (cbShapeB == null) return;
-            cbShapeB.Enabled = compare;
+            // Auswahl für B nur bei eingeschaltetem Vergleich zeigen, die Klappe nur, wenn das Modell eine hat
             var mb = modelB ?? model;
             bool has = mb != null && mb.HasMotion && !mb.IsCustom;
-            chkMotionB.Enabled = compare && has;
-            chkMotionB.Text = has ? "B mit " + (mb.MotionName == "DRS" ? "offenem DRS" : mb.MotionName + " an") : "B mit offener Klappe (Modell hat keine)";
+            cbShapeB.Visible = compare;
+            chkMotionB.Visible = compare && has;
+            chkMotionB.Text = has ? "B mit " + (mb.MotionName == "DRS" ? "offenem DRS" : mb.MotionName + " an") : "";
             suppress = true;
             chkMotionB.Checked = motionB >= 0.5f;
             suppress = false;
