@@ -114,6 +114,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   mit Verlauf bzw. Schnittbild daneben, **Statuszeile** ganz unten (Zustand, GPU, Gitter, Tempo, Meldungen).
 - Look „technischer, gleiche Farben“: Karten-Ecken 12, keine Schatten, Knöpfe/Felder mit Ecken 8–10 statt Pillen,
   Abschnittstitel in Großbuchstaben.
+- „Ansicht groß“ (Knopf oben rechts in der Ansicht, Taste F, zurück mit F/Esc): blendet Einstellungen und Ergebnisse aus
+  (2D und 3D); im Vergleich werden A und B so ~1,4x größer.
 - Übergänge: 2D ↔ 3D und hell ↔ dunkel blenden weich über (`Transition.CrossFade` in Ui.cs: Fensterfoto als
   Deckblatt, 240 ms Ease-out). Ohne Windows-Animationen (UIEffectsEnabled) sofort.
 

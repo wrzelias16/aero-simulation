@@ -267,6 +267,16 @@ static class Vorschau3D
                     Call(f2, "SwitchTheme");
                     t2.Interval = 600;
                     break;
+                case 8:
+                    // Ansicht groß (Vergleich läuft noch), etwas größeres Fenster
+                    f2.ClientSize = new Size(1600, 960);
+                    Call(f2, "SetViewMax", true);
+                    t2.Interval = 1500;
+                    break;
+                case 9:
+                    Save(f2, Path.Combine(dir, "fenster_2d_gross.png"));
+                    t2.Interval = 100;
+                    break;
                 default:
                     t2.Stop();
                     f2.Close();

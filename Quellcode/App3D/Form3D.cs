@@ -43,7 +43,8 @@ namespace Windkanal3D
         float[] fineTris;          // fein unterteilte Oberfläche für die Druckfarben (große Flächen bekommen sonst nur eine Farbe)
         int[] pressureLut;
         double lastPressure;
-        FlatButton btnFile;
+        FlatButton btnFile, btnMax;
+        bool viewMax;
         FileMenu fileMenu;
         double lastRecPaint;
         /// <summary>Eine 2D-Sitzung wurde hier geöffnet: im 2D-Fenster laden.</summary>
@@ -200,6 +201,13 @@ namespace Windkanal3D
             view.MouseEnter += delegate { view.Focus(); };
             view.DoubleClick += delegate { scene.ResetCamera(); sceneDirty = true; view.Invalidate(); };
             cardView.Controls.Add(view);
+            // Ansicht groß: Einstellungen und Ergebnisse ausblenden (Taste F, zurück mit F oder Esc)
+            btnMax = new FlatButton { Icon = "\uE740", BackColor = Theme.Card };
+            if (Theme.Icons == null) btnMax.Text = "Groß";
+            tips.SetToolTip(btnMax, "Ansicht groß (F) – Einstellungen und Ergebnisse ausblenden");
+            btnMax.Click += delegate { SetViewMax(!viewMax); };
+            cardView.Controls.Add(btnMax);
+
 
             // --- Messwerte
             // Ergebnisse: Tabelle der Kennwerte links, Schnittbild der Geschwindigkeit rechts
@@ -387,7 +395,9 @@ namespace Windkanal3D
             segViz.SetBounds(Math.Max(230, Outer + (lw - vw) / 2), (TopH - 38) / 2, vw, 38);
 
             cardRes.SetBounds(Outer, bottom - BottomH, lw, BottomH);
-            cardView.SetBounds(Outer, TopH, lw, cardRes.Top - Gap - TopH);
+            if (viewMax) cardView.SetBounds(Outer, TopH, W - 2 * Outer, bottom - TopH);
+            else cardView.SetBounds(Outer, TopH, lw, cardRes.Top - Gap - TopH);
+            btnMax.SetBounds(cardView.Width - Card.Pad - 32, 8, 32, 32);
             view.SetBounds(10, Card.Head, cardView.Width - 20, cardView.Height - Card.Head - 34);
             // Schnittbild rechts in der Ergebnis-Karte
             int sw = Math.Max(220, (int)(cardRes.Width * 0.38));
@@ -743,8 +753,30 @@ namespace Windkanal3D
             LayoutAll();
         }
 
+        /// <summary>Ansicht groß: nur Kopf, Ansicht und Statuszeile; Einstellungen und Ergebnisse ausgeblendet.</summary>
+        void SetViewMax(bool on)
+        {
+            if (on == viewMax) return;
+            Transition.CrossFade(this, () =>
+            {
+                viewMax = on;
+                btnMax.Icon = on ? "\uE73F" : "\uE740";
+                tips.SetToolTip(btnMax, on ? "Zurück zur normalen Ansicht (F oder Esc)" : "Ansicht groß (F) – Einstellungen und Ergebnisse ausblenden");
+                cardSet.Visible = !on;
+                cardRes.Visible = !on;
+                LayoutAll();
+                btnMax.Invalidate();
+            });
+        }
+
         void OnKey(object sender, KeyEventArgs e)
         {
+            if (!(ActiveControl is TextBox) && (e.KeyCode == Keys.F || (e.KeyCode == Keys.Escape && viewMax)) && !e.Control)
+            {
+                SetViewMax(e.KeyCode == Keys.F ? !viewMax : false);
+                e.Handled = true; e.SuppressKeyPress = true;
+                return;
+            }
             if (!(ActiveControl is TextBox) && fileMenu.HandleKey(e)) { e.Handled = true; e.SuppressKeyPress = true; return; }
             if (e.KeyCode == Keys.Space)
             {

@@ -59,7 +59,8 @@ namespace Windkanal
         ModelPicker cbShape;
         FlatSlider tbAngle, tbSize, tbRe;
         Toggle chkSmoke, chkWalls;
-        FlatButton btnRun, btnReset, btnInfo, btnTheme, btnFile;
+        FlatButton btnRun, btnReset, btnInfo, btnTheme, btnFile, btnMax;
+        bool viewMax;
 
         // Vergleich: zweite Strömung B mit denselben Einstellungen (Re, Größe, Winkel, Auflösung),
         // aber anderem Modell bzw. anderer Klappenstellung. A oben, B unten im Strömungsbild.
@@ -212,6 +213,13 @@ namespace Windkanal
             btnMotion.Click += delegate { ToggleMotion(); };
             tips.SetToolTip(btnMotion, "Bewegliches Teil auf- bzw. zufahren (Taste D)");
             cardView.Controls.Add(btnMotion);
+            // Ansicht groß: Einstellungen und Ergebnisse ausblenden (Taste F, zurück mit F oder Esc)
+            btnMax = new FlatButton { Icon = "\uE740", BackColor = Theme.Card };
+            if (Theme.Icons == null) btnMax.Text = "Groß";
+            tips.SetToolTip(btnMax, "Ansicht groß (F) – Einstellungen und Ergebnisse ausblenden");
+            btnMax.Click += delegate { SetViewMax(!viewMax); };
+            cardView.Controls.Add(btnMax);
+
 
             // --- Ergebnisse: Tabelle (Kennwerte) und Verlauf in einer Karte
             cardRes = new Card("Ergebnisse");
@@ -360,10 +368,12 @@ namespace Windkanal
 
             // Mitte: Ansicht groß, darunter die Ergebnisse
             cardRes.SetBounds(Outer, bottom - BottomH, lw, BottomH);
-            cardView.SetBounds(Outer, TopH, lw, cardRes.Top - Gap - TopH);
+            if (viewMax) cardView.SetBounds(Outer, TopH, W - 2 * Outer, bottom - TopH);
+            else cardView.SetBounds(Outer, TopH, lw, cardRes.Top - Gap - TopH);
             view.SetBounds(10, Card.Head, cardView.Width - 20, cardView.Height - Card.Head - 34);
             int mw2 = Math.Max(140, Theme.Width(btnMotion.Text, btnMotion.Font) + 36);
-            btnMotion.SetBounds(cardView.Width - Card.Pad - mw2, 8, mw2, 32);
+            btnMax.SetBounds(cardView.Width - Card.Pad - 32, 8, 32, 32);
+            btnMotion.SetBounds(btnMax.Left - 8 - mw2, 8, mw2, 32);
             cbMotionSpeed.SetBounds(btnMotion.Left - 8 - 160, 8, 160, 32);
 
             // rechts: Einstellungen über die ganze Höhe (scrollt bei kleinen Fenstern)
@@ -553,8 +563,30 @@ namespace Windkanal
             RebuildGeometry(true);
         }
 
+        /// <summary>Ansicht groß: nur Kopf, Ansicht und Statuszeile; Einstellungen und Ergebnisse ausgeblendet.</summary>
+        void SetViewMax(bool on)
+        {
+            if (on == viewMax) return;
+            Transition.CrossFade(this, () =>
+            {
+                viewMax = on;
+                btnMax.Icon = on ? "\uE73F" : "\uE740";
+                tips.SetToolTip(btnMax, on ? "Zurück zur normalen Ansicht (F oder Esc)" : "Ansicht groß (F) – Einstellungen und Ergebnisse ausblenden");
+                cardSet.Visible = !on;
+                cardRes.Visible = !on;
+                LayoutAll();
+                btnMax.Invalidate();
+            });
+        }
+
         void OnKey(object sender, KeyEventArgs e)
         {
+            if (!(ActiveControl is TextBox) && (e.KeyCode == Keys.F || (e.KeyCode == Keys.Escape && viewMax)) && !e.Control)
+            {
+                SetViewMax(e.KeyCode == Keys.F ? !viewMax : false);
+                e.Handled = true; e.SuppressKeyPress = true;
+                return;
+            }
             if (!(ActiveControl is TextBox) && fileMenu.HandleKey(e)) { e.Handled = true; e.SuppressKeyPress = true; return; }
             if (e.KeyCode == Keys.Space && !(ActiveControl is TextBox))
             {
