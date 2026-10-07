@@ -72,6 +72,34 @@ static class Vorschau3D
             if (!ok) fails++;
         }
 
+        // 2c. Vorne/hinten: Auto mit Heckflügel, der in der Datei bei -z liegt (Y oben). Nach dem Laden muss der Flügel hinten (+x) sein.
+        {
+            string wing = Path.Combine(dir, "auto_mit_fluegel.obj");
+            var sb = new System.Text.StringBuilder();
+            Action<double, double, double, double, double, double> box = (x0, x1, y0, y1, z0, z1) =>
+            {
+                int b = 0;
+                foreach (var l in sb.ToString().Split('\n')) if (l.StartsWith("v ")) b++;
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                foreach (var z in new[] { z0, z1 }) foreach (var y in new[] { y0, y1 }) foreach (var x in new[] { x0, x1 })
+                    sb.Append(string.Format(inv, "v {0} {1} {2}\n", x, y, z));
+                int[][] f = { new[] { 1, 3, 4, 2 }, new[] { 5, 6, 8, 7 }, new[] { 1, 2, 6, 5 }, new[] { 3, 7, 8, 4 }, new[] { 1, 5, 7, 3 }, new[] { 2, 4, 8, 6 } };
+                foreach (var q in f) sb.Append("f " + (q[0] + b) + " " + (q[1] + b) + " " + (q[2] + b) + " " + (q[3] + b) + "\n");
+            };
+            box(-0.9, 0.9, 0.0, 1.0, -2.2, 2.2);    // Wagen: Länge auf z, Höhe auf y
+            box(-0.9, 0.9, 1.0, 1.5, -2.2, -1.7);   // Flügel bei -z, deutlich höher als der Wagen
+            File.WriteAllText(wing, sb.ToString());
+            var m = Mesh.Load(wing);
+            var p = Placement.Build(m, 0, 0, 0.5, true, 256, 112, 112);
+            float wx = 0, wn = 0, xmin = float.MaxValue, xmax = float.MinValue, ztop = float.MinValue;
+            for (int i = 0; i < p.World.Length; i += 3) { xmin = Math.Min(xmin, p.World[i]); xmax = Math.Max(xmax, p.World[i]); ztop = Math.Max(ztop, p.World[i + 2]); }
+            for (int i = 0; i < p.World.Length; i += 3) if (p.World[i + 2] > ztop - 0.01f) { wx += p.World[i]; wn++; }
+            bool ok = wx / wn > (xmin + xmax) / 2;
+            Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "Vorne/hinten: Flügel liegt " + (ok ? "hinten" : "vorne") + " (höchster Punkt bei x = "
+                              + (wx / wn).ToString("0") + ", Körper " + xmin.ToString("0") + " … " + xmax.ToString("0") + ")");
+            if (!ok) fails++;
+        }
+
         // 3. Fenster unsichtbar öffnen, rechnen lassen, Bilder speichern
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);

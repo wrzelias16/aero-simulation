@@ -69,6 +69,29 @@ namespace Windkanal3D
         }
     }
 
+    /// <summary>Rauchrechen wie im echten Windkanal: wenige, klar getrennte Düsen in Kreuzform vor dem Körper.</summary>
+    public static class SmokeRake
+    {
+        /// <summary>Senkrechte Reihe in der Mitte (Strömung über den Körper) und waagrechte Reihe auf halber Höhe (seitlich).</summary>
+        public static List<float[]> Build(float[] bmin, float[] bmax, int nx, int ny, int nz, bool onGround)
+        {
+            float w = bmax[1] - bmin[1], h = bmax[2] - bmin[2], len = bmax[0] - bmin[0];
+            float x = Math.Max(2, bmin[0] - Math.Max(4, 0.35f * Math.Max(len, Math.Max(w, h))));
+            float yc = (bmin[1] + bmax[1]) / 2, zc = (bmin[2] + bmax[2]) / 2;
+            var pts = new List<float[]>();
+            float z0 = onGround ? Math.Max(1.5f, bmin[2] + 0.15f * h) : Math.Max(1, bmin[2] - 0.4f * h), z1 = Math.Min(nz - 1, bmax[2] + 0.5f * h);
+            const int rows = 7, cols = 9;
+            for (int r = 0; r < rows; r++) pts.Add(new[] { x, yc, z0 + (z1 - z0) * r / (rows - 1) });
+            float y0 = Math.Max(1, bmin[1] - 0.5f * w), y1 = Math.Min(ny - 1, bmax[1] + 0.5f * w);
+            for (int c = 0; c < cols; c++)
+            {
+                if (c == cols / 2) continue;   // Mitte hat schon die senkrechte Reihe
+                pts.Add(new[] { x, y0 + (y1 - y0) * c / (cols - 1), zc });
+            }
+            return pts;
+        }
+    }
+
     public static class Streamlines
     {
         /// <summary>
@@ -104,62 +127,4 @@ namespace Windkanal3D
         }
     }
 
-    /// <summary>Rauchteilchen: werden am Rechen ausgestoßen und mit der Strömung mitgetragen.</summary>
-    public sealed class Smoke
-    {
-        public const int Max = 60000;
-        public readonly float[] P = new float[Max * 3];
-        public readonly float[] Age = new float[Max];
-        public int Count;
-        readonly Random rnd = new Random(7);
-        double emitAcc;
-
-        public void Clear() { Count = 0; emitAcc = 0; }
-
-        /// <param name="dt">vergangene Rechenschritte seit dem letzten Aufruf</param>
-        public void Update(FlowField f, List<float[]> emitters, float dt, float uIn)
-        {
-            // mitbewegen (Mittelpunktsregel) in Teilschritten von höchstens etwa einer Zelle, raus = weg
-            int n = Count;
-            int sub = Math.Max(1, (int)Math.Ceiling(dt * uIn * 1.6f));
-            float h = dt / sub;
-            Parallel.For(0, n, i =>
-            {
-                float x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2];
-                for (int s = 0; s < sub; s++)
-                {
-                    float ux, uy, uz;
-                    f.Sample(x, y, z, out ux, out uy, out uz);
-                    f.Sample(x + 0.5f * h * ux, y + 0.5f * h * uy, z + 0.5f * h * uz, out ux, out uy, out uz);
-                    x += h * ux; y += h * uy; z += h * uz;
-                    if (!f.Inside(x, y, z) || f.IsSolid(x, y, z)) { Age[i] = -1; return; }
-                }
-                P[3 * i] = x; P[3 * i + 1] = y; P[3 * i + 2] = z;
-                Age[i] += dt;
-            });
-            int w = 0;
-            for (int i = 0; i < n; i++)
-            {
-                if (Age[i] < 0) continue;
-                if (w != i) { P[3 * w] = P[3 * i]; P[3 * w + 1] = P[3 * i + 1]; P[3 * w + 2] = P[3 * i + 2]; Age[w] = Age[i]; }
-                w++;
-            }
-            Count = w;
-
-            // neue Teilchen: gleichmäßiger Strom, Abstand etwa 0,8 Zellen entlang jeder Linie
-            emitAcc += dt * uIn / 0.8;
-            int rounds = (int)emitAcc;
-            emitAcc -= rounds;
-            for (int r = 0; r < rounds; r++)
-                foreach (var e in emitters)
-                {
-                    if (Count >= Max) return;
-                    int i = Count++;
-                    P[3 * i] = e[0] + (float)rnd.NextDouble() * 0.8f;
-                    P[3 * i + 1] = e[1] + (float)(rnd.NextDouble() - 0.5) * 0.35f;
-                    P[3 * i + 2] = e[2] + (float)(rnd.NextDouble() - 0.5) * 0.35f;
-                    Age[i] = 0;
-                }
-        }
-    }
 }

@@ -38,9 +38,8 @@ namespace Windkanal3D
         int vizMode;
         FlowField field;
         List<float[]> rakeLines, rakeSmoke;
-        readonly Smoke smoke = new Smoke();
         double lastField, lastLines;
-        long stepsAtField;
+
         double reynolds = 100, reUsed, tauUsed;
         long steps;
 
@@ -65,7 +64,7 @@ namespace Windkanal3D
 
         // Oberfläche
         Segmented segMode, segViz, segSlice;
-        FlatButton btnRotX, btnRotY, btnRotZ, btnAuto;
+        FlatButton btnRotX, btnRotY, btnRotZ, btnFlip, btnAuto;
         FlatButton btnRun, btnReset, btnTheme, btnLoad;
         Card cardView, cardCd, cardCl, cardKenn, cardSlice, cardSet;
         ViewCanvas view;
@@ -138,7 +137,7 @@ namespace Windkanal3D
             segViz.SelectedIndexChanged += delegate
             {
                 vizMode = segViz.SelectedIndex;
-                smoke.Clear();
+                ApplySmokeMode();
                 lastLines = lastField = 0;
                 UpdateSceneFlow();
             };
@@ -196,26 +195,32 @@ namespace Windkanal3D
             btnLoad.Click += delegate { LoadFile(); };
             hintModel = (HintLabel)add(new HintLabel(""), 32, 4);
             // Ausrichtung: um 90° kippen (x = Strömungsrichtung, y = quer, z = oben) oder automatisch
-            int bw4 = (w - 3 * 8) / 4;
             btnRotX = new FlatButton { Text = "X", Icon = "\uE7AD" };
             btnRotY = new FlatButton { Text = "Y", Icon = "\uE7AD" };
             btnRotZ = new FlatButton { Text = "Z", Icon = "\uE7AD" };
+            btnFlip = new FlatButton { Text = "180°" };
             btnAuto = new FlatButton { Text = "Auto" };
-            var rotBtns = new[] { btnRotX, btnRotY, btnRotZ, btnAuto };
-            for (int i = 0; i < 4; i++)
+            var rotBtns = new[] { btnRotX, btnRotY, btnRotZ, btnFlip, btnAuto };
+            int[] bws = { 52, 52, 52, 0, 0 };
+            int rest = (w - 3 * 52 - 4 * 6) / 2, bx = Card.Pad;
+            bws[3] = rest; bws[4] = rest;
+            for (int i = 0; i < 5; i++)
             {
                 rotBtns[i].BackColor = Theme.Card;
-                rotBtns[i].SetBounds(Card.Pad + i * (bw4 + 8), y, bw4, 40);
+                rotBtns[i].SetBounds(bx, y, bws[i], 40);
+                bx += bws[i] + 6;
                 cardSet.Controls.Add(rotBtns[i]);
             }
             y += 48;
             tips.SetToolTip(btnRotX, "Um die Strömungsrichtung kippen (90°)");
             tips.SetToolTip(btnRotY, "Nase hoch/runter kippen (90°)");
             tips.SetToolTip(btnRotZ, "Um die Hochachse drehen (90°)");
-            tips.SetToolTip(btnAuto, "Automatisch: längste Seite in Strömungsrichtung, flachste Seite nach oben");
+            tips.SetToolTip(btnFlip, "Vorne und hinten tauschen");
+            tips.SetToolTip(btnAuto, "Automatisch: längste Seite in Strömungsrichtung, flachste Seite nach oben, höheres Ende nach hinten");
             btnRotX.Click += delegate { mesh.Rotate90(0); Rebuild(); };
             btnRotY.Click += delegate { mesh.Rotate90(1); Rebuild(); };
             btnRotZ.Click += delegate { mesh.Rotate90(2); Rebuild(); };
+            btnFlip.Click += delegate { mesh.Rotate180(); Rebuild(); };
             btnAuto.Click += delegate { mesh.AutoOrient(); Rebuild(); };
             tbYaw = (FlatSlider)add(new FlatSlider { Text = "Drehung um die Hochachse", Minimum = -180, Maximum = 180 }, 46, 4);
             tbYaw.ValueChanged += delegate { yaw = tbYaw.Value; UpdateLabels(); if (!suppress) RebuildSoon(); };
@@ -501,11 +506,9 @@ namespace Windkanal3D
         {
             if (lbm != null) lbm.Reset(UIn);
             steps = 0;
-            stepsAtField = 0;
             field = null;
-            smoke.Clear();
+            if (lbm != null) lbm.SmokeClear();
             scene.Lines = null;
-            scene.SmokeCount = 0;
             lastField = lastLines = 0;
             history.Clear();
             cw = ca = cs = cwMean = caMean = 0;
@@ -602,7 +605,34 @@ namespace Windkanal3D
             var bmax = new[] { float.MinValue, float.MinValue, float.MinValue };
             for (int i = 0; i < w.Length; i++) { int a = i % 3; bmin[a] = Math.Min(bmin[a], w[i]); bmax[a] = Math.Max(bmax[a], w[i]); }
             rakeLines = Rake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, 11, 5, onGround);
-            rakeSmoke = Rake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, 15, 6, onGround);
+            rakeSmoke = SmokeRake.Build(bmin, bmax, scene.NX, scene.NY, scene.NZ, onGround);
+            ApplySmokeMode();
+        }
+
+        /// <summary>
+        /// Echter Rauch: ein Dichtefeld in voller Auflösung, das die Grafikkarte mit der Strömung mitträgt.
+        /// Aus jeder Düse des Rauchrechens strömt ein dünner Faden (Radius knapp eine Zelle bei mittlerer Auflösung).
+        /// </summary>
+        void ApplySmokeMode()
+        {
+            if (lbm == null) return;
+            bool on = vizMode == 1;
+            if (on && rakeSmoke != null)
+            {
+                var xyz = new float[rakeSmoke.Count * 3];
+                for (int i = 0; i < rakeSmoke.Count; i++) { xyz[3 * i] = rakeSmoke[i][0]; xyz[3 * i + 1] = rakeSmoke[i][1]; xyz[3 * i + 2] = rakeSmoke[i][2]; }
+                lbm.SetSmokeSources(xyz, Math.Max(0.9f, scene.NY / 112f * 0.9f));
+            }
+            if (on && !lbm.SmokeOn) lbm.SmokeClear();
+            lbm.SmokeOn = on;
+            scene.Overlay = on ? (Func<float[], int, int, float[], byte[]>)SmokeOverlay : null;
+        }
+
+        byte[] SmokeOverlay(float[] invDepth, int w, int h, float[] cam)
+        {
+            // weißer Rauch auf dunklem Grund, im hellen Design dunkelgrauer Rauch
+            float r = Theme.Dark ? 0.93f : 0.22f, g = Theme.Dark ? 0.94f : 0.25f, b = Theme.Dark ? 0.96f : 0.30f;
+            return lbm.RenderSmoke(w, h, cam, invDepth, r, g, b, 0.9f);
         }
 
         /// <summary>Geschwindigkeitsfeld holen, Stromlinien bzw. Rauch nachführen und die 3D-Ansicht neu zeichnen.</summary>
@@ -616,8 +646,7 @@ namespace Windkanal3D
             }
             else
             {
-                double every = vizMode == 1 ? 90 : 350;
-                if (field == null || now - lastField > every)
+                if (vizMode == 0 && (field == null || now - lastField > 350))
                 {
                     int stride = Math.Max(1, (int)Math.Ceiling(Math.Pow(lbm.N / 600000.0, 1.0 / 3)));
                     int cnx, cny, cnz;
@@ -631,13 +660,7 @@ namespace Windkanal3D
                     scene.Lines = Streamlines.Trace(field, rakeLines, UIn);
                     redraw = true;
                 }
-                if (vizMode == 1 && rakeSmoke != null)
-                {
-                    float dt = steps - stepsAtField;
-                    stepsAtField = steps;
-                    if (dt > 0) smoke.Update(field, rakeSmoke, dt, UIn);
-                    redraw = true;
-                }
+                if (vizMode == 1) redraw = true;   // Rauch wird beim Zeichnen von der Grafikkarte geholt
             }
             // höchstens etwa 30 Bilder pro Sekunde, damit die Rechnung Vorrang hat
             if (redraw && now - lastRender > 33) { lastRender = now; UpdateSceneFlow(); }
@@ -647,8 +670,6 @@ namespace Windkanal3D
         {
             scene.Lut = sliceLut;
             scene.Lines = vizMode == 0 ? scene.Lines : null;
-            scene.SmokeP = smoke.P;
-            scene.SmokeCount = vizMode == 1 ? smoke.Count : 0;
             scene.ShowSlicePlane = vizMode == 2;
             sceneDirty = true;
             view.Invalidate();

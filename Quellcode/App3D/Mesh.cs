@@ -52,7 +52,34 @@ namespace Windkanal3D
             int det = r[0] * (r[4] * r[8] - r[5] * r[7]) - r[1] * (r[3] * r[8] - r[5] * r[6]) + r[2] * (r[3] * r[7] - r[4] * r[6]);
             if (det < 0) for (int k = 3; k < 6; k++) r[k] = -r[k];
             Rot = r;
+            if (FrontIsHigher()) Rotate180();
         }
+
+        /// <summary>
+        /// Vorne = gegen die Strömung (-x). Bei Fahrzeugen ist das Heck meist das höhere Ende (Heckflügel, Dach, Kofferraum),
+        /// die Nase das flache. Vergleicht die größte Höhe im vorderen und im hinteren Sechstel.
+        /// </summary>
+        bool FrontIsHigher()
+        {
+            var R = Rot;
+            float xmin = float.MaxValue, xmax = float.MinValue, zmin = float.MaxValue, zmax = float.MinValue;
+            for (int i = 0; i < V.Length; i += 3)
+            {
+                float x = R[0] * V[i] + R[1] * V[i + 1] + R[2] * V[i + 2], z = R[6] * V[i] + R[7] * V[i + 1] + R[8] * V[i + 2];
+                xmin = Math.Min(xmin, x); xmax = Math.Max(xmax, x); zmin = Math.Min(zmin, z); zmax = Math.Max(zmax, z);
+            }
+            float band = (xmax - xmin) / 6, front = float.MinValue, rear = float.MinValue;
+            for (int i = 0; i < V.Length; i += 3)
+            {
+                float x = R[0] * V[i] + R[1] * V[i + 1] + R[2] * V[i + 2], z = R[6] * V[i] + R[7] * V[i + 1] + R[8] * V[i + 2];
+                if (x < xmin + band) front = Math.Max(front, z);
+                if (x > xmax - band) rear = Math.Max(rear, z);
+            }
+            return front > rear + 0.03f * (zmax - zmin);
+        }
+
+        /// <summary>Vorne und hinten tauschen (180° um die Hochachse).</summary>
+        public void Rotate180() { Rotate90(2); Rotate90(2); }
 
         /// <summary>Um 90° um eine Windkanal-Achse kippen (0 = x, 1 = y, 2 = z).</summary>
         public void Rotate90(int axis)

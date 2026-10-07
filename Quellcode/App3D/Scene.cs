@@ -25,10 +25,12 @@ namespace Windkanal3D
         /// <summary>Stromlinien: je Linie x, y, z, Geschwindigkeit/uIn je Punkt. Farbe aus Lut (0 … 1,5·U).</summary>
         public System.Collections.Generic.List<float[]> Lines;
         public int[] Lut;
-        /// <summary>Rauchteilchen (x, y, z je Teilchen).</summary>
-        public float[] SmokeP;
-        public int SmokeCount;
-        public Color SmokeColor = Color.FromArgb(238, 241, 245);
+        /// <summary>
+        /// Zusätzliche Ebene über dem Bild (z. B. Rauch von der Grafikkarte): bekommt je Bildpunkt 1/Abstand zur nächsten
+        /// Fläche (0 = keine) sowie die Kamera (Position, vorwärts, rechts, oben je xyz, Brennweite in Ausgabe-Bildpunkten)
+        /// und liefert RGBA mit vormultiplizierter Deckkraft in der Ausgabegröße.
+        /// </summary>
+        public Func<float[], int, int, float[], byte[]> Overlay;
         /// <summary>Schnittebene als farbige Fläche im Raum (Werte = Geschwindigkeit/uIn, feste Zellen = -1).</summary>
         public float[] SliceData;
         public bool ShowSlicePlane;
@@ -58,10 +60,28 @@ namespace Windkanal3D
             SetupCamera();
             DrawFloor();
             if (Triangles != null) DrawMesh(Triangles);
+            byte[] over = null;
+            if (Overlay != null)
+            {
+                // Tiefe je Ausgabe-Bildpunkt: die nächste Fläche im Block
+                var iz = new float[w * h];
+                Parallel.For(0, h, y =>
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        float m = 0;
+                        for (int j = 0; j < ss; j++)
+                            for (int i = 0; i < ss; i++) m = Math.Max(m, depth[(y * ss + j) * sw + x * ss + i]);
+                        iz[y * w + x] = m;
+                    }
+                });
+                var cam = new[] { (float)cx, (float)cy, (float)cz, (float)fx, (float)fy, (float)fz, (float)rx, (float)ry, (float)rz,
+                                  (float)ux, (float)uy, (float)uz, (float)(focal / ss) };
+                over = Overlay(iz, w, h, cam);
+            }
             if (ShowSlicePlane && SliceData != null && Lut != null) DrawSlicePlane();
             if (Lines != null && Lut != null) foreach (var l in Lines) PolyLine(l);
             DrawFrame();
-            if (SmokeP != null && SmokeCount > 0) DrawSmoke();
             if (SliceAxis >= 0) DrawSlice();
 
             var bmp = new Bitmap(w, h, PixelFormat.Format32bppRgb);
@@ -82,6 +102,17 @@ namespace Windkanal3D
                     int n = ss * ss;
                     row[x] = (255 << 24) | ((r / n) << 16) | ((g / n) << 8) | (b / n);
                 }
+                if (over != null)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int o = 4 * (y * w + x), a = over[o + 3];
+                        if (a == 0 && over[o] == 0) continue;
+                        int c = row[x], k = 255 - a;
+                        int r = Math.Min(255, over[o] + ((c >> 16) & 255) * k / 255);
+                        int g = Math.Min(255, over[o + 1] + ((c >> 8) & 255) * k / 255);
+                        int b = Math.Min(255, over[o + 2] + (c & 255) * k / 255);
+                        row[x] = (255 << 24) | (r << 16) | (g << 8) | b;
+                    }
                 Marshal.Copy(row, 0, data.Scan0 + y * data.Stride, w);
             }
             bmp.UnlockBits(data);
@@ -261,30 +292,7 @@ namespace Windkanal3D
             }
         }
 
-        void DrawSmoke()
-        {
-            int sr = SmokeColor.R, sg = SmokeColor.G, sb = SmokeColor.B;
-            int rad = Math.Max(1, ss);
-            for (int i = 0; i < SmokeCount; i++)
-            {
-                float x, y, iz;
-                if (!Project(SmokeP[3 * i], SmokeP[3 * i + 1], SmokeP[3 * i + 2], out x, out y, out iz)) continue;
-                int cxp = (int)x, cyp = (int)y;
-                for (int j = 0; j < rad; j++)
-                    for (int k = 0; k < rad; k++)
-                    {
-                        int qx = cxp + k, qy = cyp + j;
-                        if (qx < 0 || qy < 0 || qx >= sw || qy >= sh) continue;
-                        int p = qy * sw + qx;
-                        if (iz < depth[p] * 0.999f) continue;   // hinter dem Körper
-                        int c = color[p];
-                        // weich aufhellen wie Rauch: 40 % Richtung Rauchfarbe
-                        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-                        r += (sr - r) * 2 / 5; g += (sg - g) * 2 / 5; b += (sb - b) * 2 / 5;
-                        color[p] = (255 << 24) | (r << 16) | (g << 8) | b;
-                    }
-            }
-        }
+
 
         /// <summary>Schnittebene als Fläche mit Farben im Raum, leicht durchsichtig; feste Zellen bleiben frei.</summary>
         void DrawSlicePlane()

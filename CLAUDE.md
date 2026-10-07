@@ -19,10 +19,12 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - `Mesh.cs`: STL (binär/Text) und OBJ laden, eingebaute Körper (Kugel, Ahmed-Körper, Würfel, Zylinder),
   `Placement` dreht/skaliert/setzt den Körper und wandelt ihn in Zellen um (Strahl-Parität entlang x).
 - `Scene.cs`: eigener Software-Renderer für die 3D-Ansicht (Tiefenpuffer, Kantenglättung, alle CPU-Kerne).
-- `Flow3D.cs`: grobes Geschwindigkeitsfeld von der GPU (`Lbm3D.ReadVelocity`), Stromlinien (RK2) und Rauchteilchen.
+- `Flow3D.cs`: grobes Geschwindigkeitsfeld von der GPU (`Lbm3D.ReadVelocity`), Stromlinien (RK2), Rauchrechen (Kreuzform).
+- Rauch: echtes Dichtefeld in voller Auflösung auf der GPU (`Lbm3D.SmokeOn`, semi-Lagrange + MacCormack wie in 2D,
+  alle 2 Strömungsschritte), als Volumen gezeichnet (`RenderSmoke`, Strahlen mit Tiefe aus `Scene.Overlay`).
 - `Form3D.cs`: 3D-Fenster. Achsen: x = Strömung, y = seitlich, z = oben. Darstellung: Stromlinien, Rauch,
   Schnittebene im Raum, nur Körper. Geladene Modelle werden automatisch ausgerichtet (`Mesh.AutoOrient`:
-  längste Seite = x, flachste = oben), Knöpfe X/Y/Z kippen um 90°. Schrittzahl pro Bild nur nach GPU-Zeit
+  längste Seite = x, flachste = oben, höheres Ende = hinten), Knöpfe X/Y/Z kippen um 90°, 180° tauscht vorne/hinten. Schrittzahl pro Bild nur nach GPU-Zeit
   bemessen, sonst bremst das Zeichnen die Rechnung aus.
 - Tests: `Test3D.exe` (Rechenkern: leerer Kanal, Kugel Re 20/40, Würfel auf dem Boden),
   `Vorschau3D.exe <Ordner>` (Import-Rundreise, Zellen, speichert Bilder vom 3D- und 2D-Fenster ohne Bildschirmfoto).

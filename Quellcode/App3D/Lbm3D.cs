@@ -36,8 +36,11 @@ namespace Windkanal3D
         /// <summary>Gesamter Grafikspeicher in Bytes (0, wenn keine GPU).</summary>
         public static ulong DeviceMemory { get { InitShared(); return globalMem; } }
 
-        /// <summary>Wie viele Zellen in den Grafikspeicher passen (mit Reserve). 19 Richtungen x 2 Felder x 4 Byte + Flags.</summary>
-        public static long MaxCells { get { InitShared(); return (long)(globalMem * 0.6 / (Q * 2 * 4 + 1)); } }
+        /// <summary>
+        /// Wie viele Zellen in den Grafikspeicher passen (mit Reserve).
+        /// 19 Richtungen x 2 Felder x 4 Byte + Flags + Rauch (3 Geschwindigkeiten + 4 Dichtefelder je 4 Byte).
+        /// </summary>
+        public static long MaxCells { get { InitShared(); return (long)(globalMem * 0.6 / (Q * 2 * 4 + 1 + 7 * 4)); } }
 
         static void InitShared()
         {
@@ -101,6 +104,17 @@ namespace Windkanal3D
         IntPtr program, kStep, kBounds, kInit, kMacro, kSlice, kCoarse;
         IntPtr bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse;
         long coarseBytes;
+
+        // Rauch: Dichtefeld in voller Auflösung, mit der Strömung mitgetragen (semi-Lagrange + MacCormack, wie in 2D)
+        IntPtr kVel, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender;
+        IntPtr bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage;
+        int sourceCount, imageW, imageH;
+        float sourceRadius;
+        int smokeCounter;
+        /// <summary>Rauch wird mitgerechnet (kostet etwa so viel wie die Strömung selbst).</summary>
+        public bool SmokeOn;
+        /// <summary>Rauch alle so viele Strömungsschritte weitertragen (mit entsprechend größerem Zeitschritt).</summary>
+        public int SmokeEvery = 2;
         bool swapped;
         readonly float[] forceHost;
 
@@ -136,6 +150,12 @@ namespace Windkanal3D
             kMacro = Kernel("lbm3_macro");
             kSlice = Kernel("lbm3_slice");
             kCoarse = Kernel("lbm3_coarse");
+            kVel = Kernel("lbm3_vel");
+            kSmTrace = Kernel("smoke3_trace");
+            kSmCorrect = Kernel("smoke3_correct");
+            kSmInject = Kernel("smoke3_inject");
+            kSmClear = Kernel("smoke3_clear");
+            kSmRender = Kernel("smoke3_render");
 
             bufA = Buffer((long)Q * N * 4);
             bufB = Buffer((long)Q * N * 4);
@@ -200,6 +220,7 @@ namespace Windkanal3D
                 Arg(kBounds, 0, Dst); Arg(kBounds, 1, uIn);
                 Run(kBounds, (long)NY * NZ);
                 swapped = !swapped;
+                if (SmokeOn && ++smokeCounter % SmokeEvery == 0) SmokeAdvance(SmokeEvery);
             }
             Check(CL.clEnqueueReadBuffer(queue, bForce, 1, UIntPtr.Zero, (UIntPtr)(groups * 3L * 4), forceHost, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
             double a = 0, b = 0, c = 0;
@@ -255,13 +276,113 @@ namespace Windkanal3D
             return data;
         }
 
+        // ------------------------------------------------------------ Rauch
+
+        void EnsureSmoke()
+        {
+            if (bPhi != IntPtr.Zero) return;
+            bUx = Buffer(N * 4L); bUy = Buffer(N * 4L); bUz = Buffer(N * 4L);
+            bPhi = Buffer(N * 4L); bPhiNew = Buffer(N * 4L); bHat = Buffer(N * 4L); bBar = Buffer(N * 4L);
+            SmokeClear();
+        }
+
+        /// <summary>Allen Rauch entfernen.</summary>
+        public void SmokeClear()
+        {
+            if (bPhi == IntPtr.Zero) return;
+            foreach (var b in new[] { bPhi, bPhiNew })
+            {
+                Arg(kSmClear, 0, b);
+                Run(kSmClear, N);
+            }
+        }
+
+        /// <summary>
+        /// Rauchquellen (Düsen eines Rauchrechens): je Punkt x, y, z in Zellkoordinaten (Mitte von Zelle i = i + 0,5).
+        /// Aus jeder Düse strömt laufend ein dünner Rauchfaden mit dem Radius 'radius' (Zellen).
+        /// </summary>
+        public void SetSmokeSources(float[] xyz, float radius)
+        {
+            EnsureSmoke();
+            sourceCount = xyz.Length / 3;
+            sourceRadius = radius;
+            var pts = new float[Math.Max(1, sourceCount) * 4];
+            for (int i = 0; i < sourceCount; i++)
+            {
+                pts[4 * i] = xyz[3 * i] - 0.5f; pts[4 * i + 1] = xyz[3 * i + 1] - 0.5f; pts[4 * i + 2] = xyz[3 * i + 2] - 0.5f;
+            }
+            if (bSources != IntPtr.Zero) CL.clReleaseMemObject(bSources);
+            bSources = Buffer(pts.Length * 4L);
+            Check(CL.clEnqueueWriteBuffer(queue, bSources, 1, UIntPtr.Zero, (UIntPtr)(pts.Length * 4L), pts, 0, IntPtr.Zero, IntPtr.Zero), "Schreiben");
+        }
+
+        void SmokeAdvance(float dt)
+        {
+            EnsureSmoke();
+            Arg(kVel, 0, Src); Arg(kVel, 1, bFlag); Arg(kVel, 2, bUx); Arg(kVel, 3, bUy); Arg(kVel, 4, bUz);
+            Run(kVel, N);
+            // vorwärts (hat), zurück (bar), dann Fehler korrigieren und auf die Nachbarwerte begrenzen
+            SmokeTrace(bPhi, bHat, dt);
+            SmokeTrace(bHat, bBar, -dt);
+            Arg(kSmCorrect, 0, bPhi); Arg(kSmCorrect, 1, bHat); Arg(kSmCorrect, 2, bBar); Arg(kSmCorrect, 3, bPhiNew);
+            Arg(kSmCorrect, 4, bUx); Arg(kSmCorrect, 5, bUy); Arg(kSmCorrect, 6, bUz); Arg(kSmCorrect, 7, bFlag); Arg(kSmCorrect, 8, dt);
+            Run(kSmCorrect, N);
+            var t = bPhi; bPhi = bPhiNew; bPhiNew = t;
+            if (sourceCount > 0)
+            {
+                int r = (int)Math.Ceiling(sourceRadius) + 1, k = 2 * r + 1;
+                Arg(kSmInject, 0, bPhi); Arg(kSmInject, 1, bFlag); Arg(kSmInject, 2, bSources); Arg(kSmInject, 3, sourceCount);
+                Arg(kSmInject, 4, r); Arg(kSmInject, 5, sourceRadius);
+                Run(kSmInject, (long)sourceCount * k * k * k);
+            }
+        }
+
+        void SmokeTrace(IntPtr src, IntPtr dst, float dt)
+        {
+            Arg(kSmTrace, 0, src); Arg(kSmTrace, 1, dst); Arg(kSmTrace, 2, bUx); Arg(kSmTrace, 3, bUy); Arg(kSmTrace, 4, bUz);
+            Arg(kSmTrace, 5, bFlag); Arg(kSmTrace, 6, dt);
+            Run(kSmTrace, N);
+        }
+
+        /// <summary>
+        /// Zeichnet den Rauch als Volumen (Strahlen durch das Dichtefeld, Licht wird verschluckt).
+        /// cam = Kamera { Position xyz, vorwärts xyz, rechts xyz, oben xyz, Brennweite } für ein Bild w x h.
+        /// invDepth = 1 / Abstand zur nächsten Fläche je Bildpunkt (0 = keine), damit der Körper den Rauch verdeckt.
+        /// Ergebnis: RGBA je Bildpunkt, Farbe bereits mit der Deckkraft multipliziert.
+        /// </summary>
+        public byte[] RenderSmoke(int w, int h, float[] cam, float[] invDepth, float r, float g, float b, float density)
+        {
+            EnsureSmoke();
+            if (bImage == IntPtr.Zero || imageW != w || imageH != h)
+            {
+                if (bImage != IntPtr.Zero) CL.clReleaseMemObject(bImage);
+                if (bDepth != IntPtr.Zero) CL.clReleaseMemObject(bDepth);
+                bImage = Buffer((long)w * h * 4);
+                bDepth = Buffer((long)w * h * 4);
+                imageW = w; imageH = h;
+            }
+            Check(CL.clEnqueueWriteBuffer(queue, bDepth, 1, UIntPtr.Zero, (UIntPtr)((long)w * h * 4), invDepth, 0, IntPtr.Zero, IntPtr.Zero), "Schreiben");
+            uint a = 0;
+            Arg(kSmRender, a++, bPhi); Arg(kSmRender, a++, bDepth); Arg(kSmRender, a++, bImage); Arg(kSmRender, a++, w); Arg(kSmRender, a++, h);
+            for (int i = 0; i < 13; i++) Arg(kSmRender, a++, cam[i]);
+            Arg(kSmRender, a++, r); Arg(kSmRender, a++, g); Arg(kSmRender, a++, b); Arg(kSmRender, a++, density);
+            Run(kSmRender, (long)w * h);
+            var img = new byte[(long)w * h * 4];
+            Check(CL.clEnqueueReadBuffer(queue, bImage, 1, UIntPtr.Zero, (UIntPtr)img.LongLength, img, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
+            return img;
+        }
+
         public void Dispose()
         {
-            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse }) if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
-            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse }) if (k != IntPtr.Zero) CL.clReleaseKernel(k);
+            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse, bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage })
+                if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
+            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse, kVel, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender })
+                if (k != IntPtr.Zero) CL.clReleaseKernel(k);
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
             bufA = bufB = bFlag = bForce = bMacro = bSlice = bCoarse = IntPtr.Zero;
+            bUx = bUy = bUz = bPhi = bPhiNew = bHat = bBar = bSources = bDepth = bImage = IntPtr.Zero;
             kStep = kBounds = kInit = kMacro = kSlice = kCoarse = IntPtr.Zero;
+            kVel = kSmTrace = kSmCorrect = kSmInject = kSmClear = kSmRender = IntPtr.Zero;
             program = IntPtr.Zero;
         }
 
@@ -457,6 +578,142 @@ __kernel void lbm3_coarse(__global const float* src, __global const uchar* flag,
     }
     out[3 * j] = mx / rho; out[3 * j + 1] = my / rho; out[3 * j + 2] = mz / rho;
 }
+
+// ---- Rauch ----
+
+__kernel void lbm3_vel(__global const float* src, __global const uchar* flag, __global float* ux, __global float* uy, __global float* uz)
+{
+    int c = get_global_id(0);
+    if (c >= N) return;
+    if (flag[c] != 0) { ux[c] = 0.0f; uy[c] = 0.0f; uz[c] = 0.0f; return; }
+    float rho = 0.0f, mx = 0.0f, my = 0.0f, mz = 0.0f;
+    for (int q = 0; q < 19; q++)
+    {
+        float f = src[q * N + c];
+        rho += f; mx += f * (float)CX[q]; my += f * (float)CY[q]; mz += f * (float)CZ[q];
+    }
+    float inv = 1.0f / rho;
+    ux[c] = mx * inv; uy[c] = my * inv; uz[c] = mz * inv;
+}
+
+// trilinear in Gitterkoordinaten (Zelle i liegt bei i)
+float trilin(__global const float* a, float x, float y, float z)
+{
+    x = clamp(x, 0.0f, (float)NX - 1.001f);
+    y = clamp(y, 0.0f, (float)NY - 1.001f);
+    z = clamp(z, 0.0f, (float)NZ - 1.001f);
+    int x0 = (int)x, y0 = (int)y, z0 = (int)z;
+    float fx = x - (float)x0, fy = y - (float)y0, fz = z - (float)z0;
+    int c = x0 + NX * (y0 + NY * z0);
+    const int dy = NX, dz = NX * NY;
+    float c00 = a[c] * (1.0f - fx) + a[c + 1] * fx;
+    float c10 = a[c + dy] * (1.0f - fx) + a[c + dy + 1] * fx;
+    float c01 = a[c + dz] * (1.0f - fx) + a[c + dz + 1] * fx;
+    float c11 = a[c + dy + dz] * (1.0f - fx) + a[c + dy + dz + 1] * fx;
+    return (c00 * (1.0f - fy) + c10 * fy) * (1.0f - fz) + (c01 * (1.0f - fy) + c11 * fy) * fz;
+}
+
+// Rückverfolgung mit der Mittelpunktsregel
+float3 back3(int c, float dt, __global const float* ux, __global const float* uy, __global const float* uz)
+{
+    float x = (float)(c % NX), y = (float)((c / NX) % NY), z = (float)(c / (NX * NY));
+    float mx = x - 0.5f * dt * ux[c], my = y - 0.5f * dt * uy[c], mz = z - 0.5f * dt * uz[c];
+    return (float3)(x - dt * trilin(ux, mx, my, mz), y - dt * trilin(uy, mx, my, mz), z - dt * trilin(uz, mx, my, mz));
+}
+
+__kernel void smoke3_trace(__global const float* src, __global float* dst, __global const float* ux, __global const float* uy,
+                           __global const float* uz, __global const uchar* flag, float dt)
+{
+    int c = get_global_id(0);
+    if (c >= N) return;
+    if (flag[c] != 0) { dst[c] = 0.0f; return; }
+    float3 b = back3(c, dt, ux, uy, uz);
+    dst[c] = trilin(src, b.x, b.y, b.z);
+}
+
+__kernel void smoke3_correct(__global const float* phi, __global const float* hat, __global const float* bar, __global float* dst,
+                             __global const float* ux, __global const float* uy, __global const float* uz,
+                             __global const uchar* flag, float dt)
+{
+    int c = get_global_id(0);
+    if (c >= N) return;
+    if (flag[c] != 0) { dst[c] = 0.0f; return; }
+    float3 b = back3(c, dt, ux, uy, uz);
+    float bx = clamp(b.x, 0.0f, (float)NX - 1.001f), by = clamp(b.y, 0.0f, (float)NY - 1.001f), bz = clamp(b.z, 0.0f, (float)NZ - 1.001f);
+    int k = (int)bx + NX * ((int)by + NY * (int)bz);
+    const int dy = NX, dz = NX * NY;
+    float lo = phi[k], hi = phi[k];
+    int nb[7] = { 1, dy, dy + 1, dz, dz + 1, dz + dy, dz + dy + 1 };
+    for (int i = 0; i < 7; i++) { float v = phi[k + nb[i]]; lo = fmin(lo, v); hi = fmax(hi, v); }
+    float v = hat[c] + 0.5f * (phi[c] - bar[c]);
+    dst[c] = clamp(v, lo, hi);
+}
+
+// Düsen: an jedem Quellpunkt eine kleine, weich auslaufende Kugel Rauch nachfüllen
+__kernel void smoke3_inject(__global float* phi, __global const uchar* flag, __global const float4* pts, int count, int r, float radius)
+{
+    int j = get_global_id(0);
+    int k = 2 * r + 1, kk = k * k * k;
+    if (j >= count * kk) return;
+    float4 p = pts[j / kk];
+    int o = j % kk;
+    int x = (int)round(p.x) + o % k - r, y = (int)round(p.y) + (o / k) % k - r, z = (int)round(p.z) + o / (k * k) - r;
+    if (x < 1 || y < 0 || z < 0 || x >= NX || y >= NY || z >= NZ) return;
+    int c = x + NX * (y + NY * z);
+    if (flag[c] != 0) return;
+    float d = length((float3)((float)x - p.x, (float)y - p.y, (float)z - p.z));
+    float v = clamp((radius - d) / 0.6f + 0.5f, 0.0f, 1.0f);
+    if (v > phi[c]) phi[c] = v;
+}
+
+__kernel void smoke3_clear(__global float* a)
+{
+    int c = get_global_id(0);
+    if (c < N) a[c] = 0.0f;
+}
+
+// Volumen-Darstellung: Strahl je Bildpunkt durch den Kanal, Rauch verschluckt und streut Licht (von vorn nach hinten).
+__kernel void smoke3_render(__global const float* phi, __global const float* invDepth, __global uchar4* img, int W, int H,
+                            float cx, float cy, float cz, float fx, float fy, float fz, float rx, float ry, float rz,
+                            float ux, float uy, float uz, float focal, float cr, float cg, float cb, float sigma)
+{
+    int p = get_global_id(0);
+    if (p >= W * H) return;
+    int i = p % W, j = p / W;
+    float sx = ((float)i + 0.5f - 0.5f * (float)W) / focal, sy = ((float)j + 0.5f - 0.5f * (float)H) / focal;
+    float3 f = (float3)(fx, fy, fz);
+    float3 d = normalize(f + sx * (float3)(rx, ry, rz) - sy * (float3)(ux, uy, uz));
+    float3 o = (float3)(cx, cy, cz);
+    // Schnitt mit dem Kanal [0,NX] x [0,NY] x [0,NZ]
+    float3 inv = 1.0f / d;
+    float3 t0 = (0.0f - o) * inv, t1 = ((float3)((float)NX, (float)NY, (float)NZ) - o) * inv;
+    float3 tmin = fmin(t0, t1), tmax = fmax(t0, t1);
+    float tn = fmax(fmax(tmin.x, tmin.y), fmax(tmin.z, 0.0f)), tf = fmin(fmin(tmax.x, tmax.y), tmax.z);
+    float iz = invDepth[p];
+    if (iz > 0.0f) tf = fmin(tf, 1.0f / (iz * dot(d, f)));
+    float3 acc = (float3)(0.0f, 0.0f, 0.0f);
+    float alpha = 0.0f;
+    if (tf > tn)
+    {
+        const float step = 0.5f;
+        // kleiner, je Bildpunkt verschiedener Versatz gegen Streifenmuster
+        float hs = sin((float)p * 12.9898f) * 43758.5453f;
+        float jitter = hs - floor(hs);
+        for (float t = tn + jitter * step; t < tf && alpha < 0.995f; t += step)
+        {
+            float3 q = o + t * d - 0.5f;
+            float rho = trilin(phi, q.x, q.y, q.z);
+            if (rho < 0.002f) continue;
+            float a = 1.0f - exp(-sigma * rho * step);
+            // etwas Licht von oben, damit der Rauch Form bekommt
+            float light = 0.78f + 0.22f * clamp(q.z / (float)NZ, 0.0f, 1.0f);
+            acc += (1.0f - alpha) * a * light * (float3)(cr, cg, cb);
+            alpha += (1.0f - alpha) * a;
+        }
+    }
+    img[p] = (uchar4)((uchar)(clamp(acc.x, 0.0f, 1.0f) * 255.0f), (uchar)(clamp(acc.y, 0.0f, 1.0f) * 255.0f),
+                      (uchar)(clamp(acc.z, 0.0f, 1.0f) * 255.0f), (uchar)(clamp(alpha, 0.0f, 1.0f) * 255.0f));
+}
 ";
     }
 
@@ -485,7 +742,9 @@ __kernel void lbm3_coarse(__global const float* src, __global const uchar* flag,
         [DllImport(Lib)] public static extern int clSetKernelArg(IntPtr kernel, uint index, UIntPtr size, ref float value);
         [DllImport(Lib)] public static extern int clEnqueueNDRangeKernel(IntPtr queue, IntPtr kernel, uint dim, IntPtr offset, UIntPtr[] global, UIntPtr[] local, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueWriteBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [In] byte[] data, uint numEvents, IntPtr events, IntPtr evt);
+        [DllImport(Lib)] public static extern int clEnqueueWriteBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [In] float[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueReadBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [Out] float[] data, uint numEvents, IntPtr events, IntPtr evt);
+        [DllImport(Lib)] public static extern int clEnqueueReadBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [Out] byte[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clReleaseMemObject(IntPtr mem);
         [DllImport(Lib)] public static extern int clReleaseKernel(IntPtr kernel);
         [DllImport(Lib)] public static extern int clReleaseProgram(IntPtr program);
