@@ -15,8 +15,8 @@ namespace Windkanal3D
     /// </summary>
     public sealed class Form3D : Form
     {
-        static readonly int[,] Res = { { 160, 64, 64 }, { 256, 112, 112 }, { 384, 160, 160 }, { 512, 224, 224 } };
-        static readonly string[] ResNames = { "Niedrig", "Mittel", "Hoch", "Sehr hoch" };
+        static readonly int[,] Res = { { 160, 64, 64 }, { 256, 112, 112 }, { 384, 160, 160 }, { 512, 224, 224 }, { 640, 288, 288 } };
+        static readonly string[] ResNames = { "Niedrig", "Mittel", "Hoch", "Sehr hoch", "Ultra" };
         static readonly CultureInfo De = CultureInfo.GetCultureInfo("de-DE");
         const float UIn = 0.05f;
         const double TauMin = 0.52;   // darunter wird der jetzige Rechenkern instabil
@@ -56,10 +56,23 @@ namespace Windkanal3D
         double dragYaw, dragPitch, dragPanX, dragPanY;
 
         readonly Scene scene = new Scene();
+
+        // Rechen-Thread: rechnet ununterbrochen, während der Haupt-Thread zeichnet.
+        // Alle Zugriffe auf 'lbm' laufen unter dieser Sperre.
+        readonly object gpu = new object();
+        System.Threading.Thread simThread;
+        volatile bool simStop;
+        volatile int uiWaiting;
+        readonly Queue<double[]> simForces = new Queue<double[]>();   // je Paket: fx, fy, fz, Schritte
+        bool simUnstable;
+        double renderMs = 10, smokeMs = 5;
+        int smokeScale = 1;
+        /// <summary>Gemessene Leistung der Grafikkarte (Mio. Zellen-Schritte pro Sekunde), 0 = unbekannt.</summary>
+        double gpuMlups;
         readonly Timer timer = new Timer();
         readonly Timer settleRender = new Timer { Interval = 140 };
         readonly Stopwatch clock = Stopwatch.StartNew();
-        double lastSlice, rateClock, gpuMsPerStep = 2, lastRender;
+        double lastSlice, rateClock, lastRender;
         long rateSteps;
 
         // Oberfläche
@@ -91,15 +104,24 @@ namespace Windkanal3D
 
             sliceLut = BuildSpeedLut();
             mesh = meshes[0];
+            resIndex = PickResolution();
             BuildUi();
             CreateSolver();
             Rebuild();
+            simThread = new System.Threading.Thread(SimLoop) { IsBackground = true, Name = "Windkanal3D-Rechnung" };
+            simThread.Start();
 
             timer.Interval = 1;
             timer.Tick += OnTick;
             settleRender.Tick += delegate { settleRender.Stop(); sceneDirty = true; view.Invalidate(); };
             VisibleChanged += delegate { if (Visible) timer.Start(); else timer.Stop(); };
-            FormClosed += delegate { timer.Stop(); if (lbm != null) lbm.Dispose(); };
+            FormClosed += delegate
+            {
+                timer.Stop();
+                simStop = true;
+                if (simThread != null) simThread.Join(2000);
+                lock (gpu) { if (lbm != null) lbm.Dispose(); lbm = null; }
+            };
             KeyDown += OnKey;
         }
 
@@ -237,7 +259,11 @@ namespace Windkanal3D
             hintRe = (HintLabel)add(new HintLabel(""), 18, 6);
             cbRes = (DropDown)add(new DropDown(), 40, 12);
             for (int i = 0; i < ResNames.Length; i++)
-                cbRes.Items.Add(ResNames[i] + " (" + Res[i, 0] + " × " + Res[i, 1] + " × " + Res[i, 2] + ")");
+            {
+                long cells = (long)Res[i, 0] * Res[i, 1] * Res[i, 2];
+                bool fits = Lbm3D.DeviceName == null || cells <= Lbm3D.MaxCells;
+                cbRes.Items.Add(ResNames[i] + " (" + Res[i, 0] + " × " + Res[i, 1] + " × " + Res[i, 2] + ")" + (fits ? "" : " – zu groß"));
+            }
             cbRes.SelectedIndex = resIndex;
             cbRes.SelectedIndexChanged += delegate
             {
@@ -449,18 +475,97 @@ namespace Windkanal3D
 
         void CreateSolver()
         {
-            if (lbm != null) { lbm.Dispose(); lbm = null; }
-            int nx = Res[resIndex, 0], ny = Res[resIndex, 1], nz = Res[resIndex, 2];
-            scene.NX = nx; scene.NY = ny; scene.NZ = nz;
+            EnterGpu();
             try
             {
-                lbm = new Lbm3D(nx, ny, nz);
-                gpuError = null;
+                if (lbm != null) { lbm.Dispose(); lbm = null; }
+                int nx = Res[resIndex, 0], ny = Res[resIndex, 1], nz = Res[resIndex, 2];
+                scene.NX = nx; scene.NY = ny; scene.NZ = nz;
+                try
+                {
+                    lbm = new Lbm3D(nx, ny, nz);
+                    gpuError = null;
+                }
+                catch (Exception ex)
+                {
+                    gpuError = ex.Message;
+                    ShowWarning("3D-Rechnung nicht möglich: " + ex.Message);
+                }
             }
-            catch (Exception ex)
+            finally { LeaveGpu(); }
+        }
+
+        /// <summary>
+        /// Größtes Gitter, das in den Grafikspeicher passt und noch mindestens etwa 300 Schritte pro Sekunde schafft.
+        /// Dafür rechnet die Grafikkarte einmal kurz zur Probe (unter einer Zehntelsekunde).
+        /// </summary>
+        int PickResolution()
+        {
+            if (Lbm3D.DeviceName == null) return 1;
+            try
             {
-                gpuError = ex.Message;
-                ShowWarning("3D-Rechnung nicht möglich: " + ex.Message);
+                int bi = (long)Res[1, 0] * Res[1, 1] * Res[1, 2] <= Lbm3D.MaxCells ? 1 : 0;
+                using (var probe = new Lbm3D(Res[bi, 0], Res[bi, 1], Res[bi, 2]))
+                {
+                    probe.SetSolid(new byte[probe.N]);
+                    probe.Reset(UIn);
+                    double fx, fy, fz;
+                    probe.Step(10, 1.5f, UIn, out fx, out fy, out fz);
+                    var sw = Stopwatch.StartNew();
+                    probe.Step(40, 1.5f, UIn, out fx, out fy, out fz);
+                    gpuMlups = probe.N * 40.0 / sw.Elapsed.TotalSeconds / 1e6;
+                }
+                int best = 0;
+                for (int i = 0; i < ResNames.Length; i++)
+                {
+                    long cells = (long)Res[i, 0] * Res[i, 1] * Res[i, 2];
+                    if (cells <= Lbm3D.MaxCells && cells <= gpuMlups * 1e6 / 300) best = i;
+                }
+                return best;
+            }
+            catch { return 0; }
+        }
+
+        void EnterGpu()
+        {
+            System.Threading.Interlocked.Increment(ref uiWaiting);
+            System.Threading.Monitor.Enter(gpu);
+        }
+
+        void LeaveGpu()
+        {
+            System.Threading.Monitor.Exit(gpu);
+            System.Threading.Interlocked.Decrement(ref uiWaiting);
+        }
+
+        /// <summary>
+        /// Rechnet in Paketen von etwa 12 ms, solange "Läuft". Zwischen den Paketen kommt der Haupt-Thread an die
+        /// Grafikkarte (Schnittbild, Rauchbild), ohne dass die Rechnung auf das Zeichnen warten muss.
+        /// </summary>
+        void SimLoop()
+        {
+            double msPerStep = 1;
+            while (!simStop)
+            {
+                bool did = false;
+                lock (gpu)
+                {
+                    if (lbm != null && running && place != null && !simUnstable)
+                    {
+                        int n = Math.Max(1, Math.Min(500, (int)(12 / Math.Max(0.002, msPerStep))));
+                        var sw = Stopwatch.StartNew();
+                        double fx, fy, fz;
+                        lbm.Step(n, (float)(1 / tauUsed), UIn, out fx, out fy, out fz);
+                        msPerStep = 0.7 * msPerStep + 0.3 * sw.Elapsed.TotalMilliseconds / n;
+                        steps += n;
+                        if (double.IsNaN(fx) || double.IsInfinity(fx)) simUnstable = true;
+                        lock (simForces) simForces.Enqueue(new[] { fx, fy, fz, n });
+                        did = true;
+                    }
+                }
+                if (!did) System.Threading.Thread.Sleep(5);
+                // der Haupt-Thread will an die Grafikkarte: kurz Vortritt lassen
+                while (uiWaiting > 0 && !simStop) System.Threading.Thread.Yield();
             }
         }
 
@@ -477,13 +582,19 @@ namespace Windkanal3D
         {
             rebuildPending = false;
             Cursor = Cursors.WaitCursor;
-            place = Placement.Build(mesh, yaw, pitch, sizePercent / 100.0, onGround, scene.NX, scene.NY, scene.NZ);
+            var np = Placement.Build(mesh, yaw, pitch, sizePercent / 100.0, onGround, scene.NX, scene.NY, scene.NZ);
             Cursor = Cursors.Default;
-            scene.Triangles = place.World;
-            if (lbm != null) lbm.SetSolid(place.Solid);
-            BuildRakes();
-            UpdateFlowParams();
-            ResetFlow();
+            EnterGpu();
+            try
+            {
+                place = np;
+                scene.Triangles = place.World;
+                if (lbm != null) lbm.SetSolid(place.Solid);
+                BuildRakes();
+                UpdateFlowParams();
+                ResetFlow();
+            }
+            finally { LeaveGpu(); }
             UpdateSlicePlane();
             UpdateLabels();
             sceneDirty = true;
@@ -504,10 +615,16 @@ namespace Windkanal3D
 
         void ResetFlow()
         {
-            if (lbm != null) lbm.Reset(UIn);
-            steps = 0;
+            EnterGpu();
+            try
+            {
+                if (lbm != null) { lbm.Reset(UIn); lbm.SmokeClear(); }
+                steps = 0;
+                simUnstable = false;
+                lock (simForces) simForces.Clear();
+            }
+            finally { LeaveGpu(); }
             field = null;
-            if (lbm != null) lbm.SmokeClear();
             scene.Lines = null;
             lastField = lastLines = 0;
             history.Clear();
@@ -559,38 +676,39 @@ namespace Windkanal3D
             double now = clock.Elapsed.TotalMilliseconds;
             if (rebuildPending && now >= rebuildAt && !dragging) Rebuild();
             if (warning != null && clock.Elapsed.TotalSeconds > warnUntil) { warning = null; cardView.Invalidate(); }
-            if (!running || lbm == null || place == null) return;
+            if (lbm == null || place == null) return;
+            if (simUnstable)
+            {
+                ShowWarning("Die Rechnung ist instabil geworden und wurde neu gestartet. Kleinere Reynoldszahl oder höhere Auflösung wählen.");
+                ResetFlow();
+                return;
+            }
+            double[][] got;
+            lock (simForces) { got = simForces.ToArray(); simForces.Clear(); }
+            if (!running || got.Length == 0) { UpdateFlowView(now); return; }
 
-            // so viele Schritte, wie in ~30 ms passen
-            int n = Math.Max(1, Math.Min(400, (int)(28 / Math.Max(0.01, gpuMsPerStep))));
-            var sw = Stopwatch.StartNew();
-            double fx, fy, fz;
-            lbm.Step(n, (float)(1 / tauUsed), UIn, out fx, out fy, out fz);
-            sw.Stop();
-            gpuMsPerStep = 0.7 * gpuMsPerStep + 0.3 * sw.Elapsed.TotalMilliseconds / n;
-            steps += n;
+            int n = 0;
+            foreach (var f in got) n += (int)f[3];
             rateSteps += n;
             if (now - rateClock > 500)
             {
                 mlups = (double)lbm.N * rateSteps / ((now - rateClock) * 1000.0);
                 rateClock = now; rateSteps = 0;
             }
-            if (double.IsNaN(fx) || double.IsInfinity(fx))
-            {
-                ShowWarning("Die Rechnung ist instabil geworden und wurde neu gestartet. Kleinere Reynoldszahl oder höhere Auflösung wählen.");
-                ResetFlow();
-                return;
-            }
             double q = 0.5 * UIn * UIn * Math.Max(1, place.FrontalCells);
-            cw = fx / q; cs = fy / q; ca = fz / q;
-            history.Enqueue(new[] { cw, ca });
-            int keep = (int)Math.Max(20, 3 * place.LengthX / UIn / Math.Max(1, n));   // etwa drei Überströmzeiten
-            while (history.Count > keep) history.Dequeue();
+            var last = got[got.Length - 1];
+            cw = last[0] / q; cs = last[1] / q; ca = last[2] / q;
+            foreach (var f in got) history.Enqueue(new[] { f[0] / q, f[2] / q, f[3] });
+            // etwa drei Überströmzeiten mitteln
+            double span = 3 * place.LengthX / UIn, sum = 0;
+            foreach (var h in history) sum += h[2];
+            while (history.Count > 20 && sum - history.Peek()[2] > span) sum -= history.Dequeue()[2];
+            bool full = sum >= 0.95 * span;
             double sCw = 0, sCa = 0, lo = double.MaxValue, hi = double.MinValue;
             foreach (var h in history) { sCw += h[0]; sCa += h[1]; lo = Math.Min(lo, h[0]); hi = Math.Max(hi, h[0]); }
             cwMean = sCw / history.Count; caMean = sCa / history.Count;
             double through = steps * UIn / Math.Max(1, scene.NX);   // wie oft die Luft schon durch den Kanal ist
-            settled = through > 1.0 && history.Count >= keep && (hi - lo) < 0.03 * Math.Abs(cwMean) + 1e-6;
+            settled = through > 1.0 && full && (hi - lo) < 0.03 * Math.Abs(cwMean) + 1e-6;
 
             if (now - lastSlice > 120) { lastSlice = now; RenderSlice(); }
             UpdateFlowView(now);
@@ -615,6 +733,13 @@ namespace Windkanal3D
         /// </summary>
         void ApplySmokeMode()
         {
+            EnterGpu();
+            try { ApplySmokeModeLocked(); }
+            finally { LeaveGpu(); }
+        }
+
+        void ApplySmokeModeLocked()
+        {
             if (lbm == null) return;
             bool on = vizMode == 1;
             if (on && rakeSmoke != null)
@@ -632,7 +757,47 @@ namespace Windkanal3D
         {
             // weißer Rauch auf dunklem Grund, im hellen Design dunkelgrauer Rauch
             float r = Theme.Dark ? 0.93f : 0.22f, g = Theme.Dark ? 0.94f : 0.25f, b = Theme.Dark ? 0.96f : 0.30f;
-            return lbm.RenderSmoke(w, h, cam, invDepth, r, g, b, 0.9f);
+            // schwächere Grafikkarten: Rauch in halber Auflösung zeichnen und weich hochrechnen
+            int k = smokeScale, sw = Math.Max(1, w / k), sh = Math.Max(1, h / k);
+            float[] d = invDepth;
+            if (k > 1)
+            {
+                d = new float[sw * sh];
+                for (int y = 0; y < sh; y++)
+                    for (int x = 0; x < sw; x++)
+                    {
+                        float m = 0;
+                        for (int j = 0; j < k; j++) for (int i = 0; i < k; i++) m = Math.Max(m, invDepth[(y * k + j) * w + x * k + i]);
+                        d[y * sw + x] = m;
+                    }
+                cam = (float[])cam.Clone();
+                cam[12] /= k;
+            }
+            byte[] img;
+            var t = Stopwatch.StartNew();
+            EnterGpu();
+            try { img = lbm == null ? new byte[sw * sh * 4] : lbm.RenderSmoke(sw, sh, cam, d, r, g, b, 0.9f); }
+            finally { LeaveGpu(); }
+            smokeMs = 0.8 * smokeMs + 0.2 * t.Elapsed.TotalMilliseconds;
+            if (smokeScale == 1 && smokeMs > 22) smokeScale = 2;
+            else if (smokeScale == 2 && smokeMs < 4) smokeScale = 1;
+            if (k == 1) return img;
+            // bilinear auf volle Größe
+            var full = new byte[w * h * 4];
+            for (int y = 0; y < h; y++)
+            {
+                float gy = Math.Max(0, Math.Min(sh - 1.001f, (y + 0.5f) / k - 0.5f));
+                int y0 = (int)gy; float fy = gy - y0;
+                for (int x = 0; x < w; x++)
+                {
+                    float gx = Math.Max(0, Math.Min(sw - 1.001f, (x + 0.5f) / k - 0.5f));
+                    int x0 = (int)gx; float fx = gx - x0;
+                    int a = 4 * (y0 * sw + x0), b2 = a + 4, c = a + 4 * sw, e = c + 4, o = 4 * (y * w + x);
+                    for (int ch = 0; ch < 4; ch++)
+                        full[o + ch] = (byte)((img[a + ch] * (1 - fx) + img[b2 + ch] * fx) * (1 - fy) + (img[c + ch] * (1 - fx) + img[e + ch] * fx) * fy);
+                }
+            }
+            return full;
         }
 
         /// <summary>Geschwindigkeitsfeld holen, Stromlinien bzw. Rauch nachführen und die 3D-Ansicht neu zeichnen.</summary>
@@ -650,7 +815,10 @@ namespace Windkanal3D
                 {
                     int stride = Math.Max(1, (int)Math.Ceiling(Math.Pow(lbm.N / 600000.0, 1.0 / 3)));
                     int cnx, cny, cnz;
-                    float[] u = lbm.ReadVelocity(stride, out cnx, out cny, out cnz);
+                    float[] u;
+                    EnterGpu();
+                    try { u = lbm.ReadVelocity(stride, out cnx, out cny, out cnz); }
+                    finally { LeaveGpu(); }
                     field = new FlowField(u, stride, cnx, cny, cnz, scene.NX, scene.NY, scene.NZ, place.Solid);
                     lastField = now;
                 }
@@ -691,7 +859,10 @@ namespace Windkanal3D
                 scene.Floor = Theme.Grid;
                 scene.SliceColor = Theme.Accent;
                 if (sceneBmp != null) sceneBmp.Dispose();
-                sceneBmp = scene.Render(view.Width, view.Height, dragging ? 1 : 2);
+                // Kantenglättung nur, wenn der Prozessor schnell genug ist (sonst ruckelt die Ansicht)
+                var t = Stopwatch.StartNew();
+                sceneBmp = scene.Render(view.Width, view.Height, dragging || renderMs > 30 ? 1 : 2);
+                renderMs = 0.8 * renderMs + 0.2 * t.Elapsed.TotalMilliseconds;
                 sceneDirty = false;
                 if (dragging) settleRender.Stop();
             }
@@ -790,7 +961,10 @@ namespace Windkanal3D
         {
             if (lbm == null || sliceView == null) return;
             int w = scene.NX, h = sliceAxis == 0 ? scene.NZ : scene.NY;
-            float[] d = lbm.ReadSlice(sliceAxis, scene.SliceIndex, UIn);
+            float[] d;
+            EnterGpu();
+            try { if (lbm == null) return; d = lbm.ReadSlice(sliceAxis, scene.SliceIndex, UIn); }
+            finally { LeaveGpu(); }
             scene.SliceData = d;
             if (sliceBmp == null || sliceBmp.Width != w || sliceBmp.Height != h)
             {

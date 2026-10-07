@@ -9,14 +9,13 @@ namespace Windkanal3D
     /// Eigenständig: benutzt nichts aus dem 2D-Code (Namensraum Windkanal3D, eigener OpenCL-Zugriff),
     /// damit 2D und 3D sich nie gegenseitig beeinflussen.
     ///
-    /// Randbedingungen: Einlass x=0 mit fester Geschwindigkeit, Auslass x=NX-1 mit Nullgradient,
+    /// Randbedingungen: Einlass x=0 mit fester Geschwindigkeit, Auslass x=NX-1 mit festem Umgebungsdruck,
     /// Seitenwände (y, z) reibungsfrei (Spiegelung). Feste Körper: Bounce-Back an der halben Strecke,
     /// Kraft per Impulsaustausch. Alle Größen in Gittereinheiten (Dichte 1, Zellgröße 1, Zeitschritt 1).
     /// </summary>
     public sealed class Lbm3D : IDisposable
     {
         public const int Q = 19;
-        const int Local = 128;
 
         // Richtungen D3Q19; Gegenrichtung von i (i > 0) ist i ungerade ? i + 1 : i - 1.
         static readonly int[] CX = { 0, 1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0 };
@@ -40,7 +39,14 @@ namespace Windkanal3D
         /// Wie viele Zellen in den Grafikspeicher passen (mit Reserve).
         /// 19 Richtungen x 2 Felder x 4 Byte + Flags + Rauch (3 Geschwindigkeiten + 4 Dichtefelder je 4 Byte).
         /// </summary>
-        public static long MaxCells { get { InitShared(); return (long)(globalMem * 0.6 / (Q * 2 * 4 + 1 + 7 * 4)); } }
+        public static long MaxCells { get { return MaxCellsFor(true); } }
+
+        public static long MaxCellsFor(bool fp16)
+        {
+            InitShared();
+            long cells = (long)(globalMem * 0.6 / (Q * 2 * (fp16 ? 2 : 4) + 1 + 7 * 4));
+            return Math.Min(cells, int.MaxValue / Q);   // Indizes bleiben 32 Bit
+        }
 
         static void InitShared()
         {
@@ -100,13 +106,15 @@ namespace Windkanal3D
         // ------------------------------------------------------------ pro Gitter
 
         public readonly int NX, NY, NZ, N;
-        readonly int groups;
+        /// <summary>Verteilungen in halber Genauigkeit gespeichert (gerechnet wird immer in voller).</summary>
+        public readonly bool Fp16;
+        readonly int groups, local;
         IntPtr program, kStep, kBounds, kInit, kMacro, kSlice, kCoarse;
         IntPtr bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse;
         long coarseBytes;
 
         // Rauch: Dichtefeld in voller Auflösung, mit der Strömung mitgetragen (semi-Lagrange + MacCormack, wie in 2D)
-        IntPtr kVel, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender;
+        IntPtr kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender;
         IntPtr bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage;
         int sourceCount, imageW, imageH;
         float sourceRadius;
@@ -122,19 +130,22 @@ namespace Windkanal3D
         IntPtr Dst { get { return swapped ? bufA : bufB; } }
 
         /// <summary>Legt den Löser an. Wirft eine Exception mit Klartext-Grund, wenn das nicht geht.</summary>
-        public Lbm3D(int nx, int ny, int nz)
+        public Lbm3D(int nx, int ny, int nz, bool fp16 = true, int localSize = 128)
         {
             if (DeviceName == null) throw new Exception(InitError ?? "keine Grafikkarte");
             long cells = (long)nx * ny * nz;
-            if (cells > MaxCells) throw new Exception("Gitter zu groß für den Grafikspeicher (" + cells + " Zellen, höchstens " + MaxCells + ")");
+            if (cells > MaxCellsFor(fp16)) throw new Exception("Gitter zu groß für den Grafikspeicher (" + cells + " Zellen, höchstens " + MaxCellsFor(fp16) + ")");
             NX = nx; NY = ny; NZ = nz; N = nx * ny * nz;
-            groups = (N + Local - 1) / Local;
+            Fp16 = fp16;
+            local = localSize;
+            groups = (N + local - 1) / local;
             forceHost = new float[groups * 3];
 
             int err;
             program = CL.clCreateProgramWithSource(context, 1, new[] { BuildSource() }, IntPtr.Zero, out err);
             Check(err, "clCreateProgramWithSource");
-            string opts = "-cl-fp32-correctly-rounded-divide-sqrt -D NX=" + nx + " -D NY=" + ny + " -D NZ=" + nz + " -D N=" + N;
+            string opts = "-cl-fp32-correctly-rounded-divide-sqrt -D NX=" + nx + " -D NY=" + ny + " -D NZ=" + nz + " -D N=" + N
+                          + " -D LOCAL=" + local + (fp16 ? " -D FP16" : "");
             err = CL.clBuildProgram(program, 1, new[] { device }, opts, IntPtr.Zero, IntPtr.Zero);
             if (err != 0)
             {
@@ -150,15 +161,14 @@ namespace Windkanal3D
             kMacro = Kernel("lbm3_macro");
             kSlice = Kernel("lbm3_slice");
             kCoarse = Kernel("lbm3_coarse");
-            kVel = Kernel("lbm3_vel");
             kSmTrace = Kernel("smoke3_trace");
             kSmCorrect = Kernel("smoke3_correct");
             kSmInject = Kernel("smoke3_inject");
             kSmClear = Kernel("smoke3_clear");
             kSmRender = Kernel("smoke3_render");
 
-            bufA = Buffer((long)Q * N * 4);
-            bufB = Buffer((long)Q * N * 4);
+            bufA = Buffer((long)Q * N * (fp16 ? 2 : 4));
+            bufB = Buffer((long)Q * N * (fp16 ? 2 : 4));
             bFlag = Buffer(N);
             bForce = Buffer(groups * 3L * 4);
             bMacro = Buffer(N * 4L);
@@ -185,10 +195,10 @@ namespace Windkanal3D
         static void Arg(IntPtr k, uint i, int v) { Check(CL.clSetKernelArg(k, i, (UIntPtr)4, ref v), "clSetKernelArg"); }
         static void Arg(IntPtr k, uint i, float v) { Check(CL.clSetKernelArg(k, i, (UIntPtr)4, ref v), "clSetKernelArg"); }
 
-        static void Run(IntPtr k, long global)
+        void Run(IntPtr k, long global)
         {
-            long g = (global + Local - 1) / Local * Local;
-            Check(CL.clEnqueueNDRangeKernel(queue, k, 1, IntPtr.Zero, new[] { (UIntPtr)g }, new[] { (UIntPtr)Local }, 0, IntPtr.Zero, IntPtr.Zero),
+            long g = (global + local - 1) / local * local;
+            Check(CL.clEnqueueNDRangeKernel(queue, k, 1, IntPtr.Zero, new[] { (UIntPtr)g }, new[] { (UIntPtr)local }, 0, IntPtr.Zero, IntPtr.Zero),
                   "clEnqueueNDRangeKernel");
         }
 
@@ -213,9 +223,14 @@ namespace Windkanal3D
         /// </summary>
         public void Step(int steps, float omega, float uIn, out double fx, out double fy, out double fz)
         {
+            if (SmokeOn) EnsureSmoke();
             for (int s = 0; s < steps; s++)
             {
+                bool smokeNow = SmokeOn && (smokeCounter + 1) % SmokeEvery == 0;
+                IntPtr vx = smokeNow ? bUx : bForce, vy = smokeNow ? bUy : bForce, vz = smokeNow ? bUz : bForce;
                 Arg(kStep, 0, Src); Arg(kStep, 1, Dst); Arg(kStep, 2, bFlag); Arg(kStep, 3, bForce); Arg(kStep, 4, omega);
+                Arg(kStep, 5, s == steps - 1 ? 1 : 0);
+                Arg(kStep, 6, vx); Arg(kStep, 7, vy); Arg(kStep, 8, vz); Arg(kStep, 9, smokeNow ? 1 : 0);
                 Run(kStep, N);
                 Arg(kBounds, 0, Dst); Arg(kBounds, 1, uIn);
                 Run(kBounds, (long)NY * NZ);
@@ -318,9 +333,7 @@ namespace Windkanal3D
 
         void SmokeAdvance(float dt)
         {
-            EnsureSmoke();
-            Arg(kVel, 0, Src); Arg(kVel, 1, bFlag); Arg(kVel, 2, bUx); Arg(kVel, 3, bUy); Arg(kVel, 4, bUz);
-            Run(kVel, N);
+            // die Geschwindigkeit hat der letzte Strömungsschritt schon mitgeschrieben
             // vorwärts (hat), zurück (bar), dann Fehler korrigieren und auf die Nachbarwerte begrenzen
             SmokeTrace(bPhi, bHat, dt);
             SmokeTrace(bHat, bBar, -dt);
@@ -376,13 +389,13 @@ namespace Windkanal3D
         {
             foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice, bCoarse, bUx, bUy, bUz, bPhi, bPhiNew, bHat, bBar, bSources, bDepth, bImage })
                 if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
-            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse, kVel, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender })
+            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice, kCoarse, kSmTrace, kSmCorrect, kSmInject, kSmClear, kSmRender })
                 if (k != IntPtr.Zero) CL.clReleaseKernel(k);
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
             bufA = bufB = bFlag = bForce = bMacro = bSlice = bCoarse = IntPtr.Zero;
             bUx = bUy = bUz = bPhi = bPhiNew = bHat = bBar = bSources = bDepth = bImage = IntPtr.Zero;
             kStep = kBounds = kInit = kMacro = kSlice = kCoarse = IntPtr.Zero;
-            kVel = kSmTrace = kSmCorrect = kSmInject = kSmClear = kSmRender = IntPtr.Zero;
+            kSmTrace = kSmCorrect = kSmInject = kSmClear = kSmRender = IntPtr.Zero;
             program = IntPtr.Zero;
         }
 
@@ -420,11 +433,24 @@ namespace Windkanal3D
         }
 
         const string KernelBody = @"
-#define LOCAL 128
+// Speicherform der Verteilungen: FP16 (halb so viele Bytes, doppelt so schnell) oder FP32.
+// Gespeichert wird f - W[i] (die Abweichung vom Ruhezustand): kleine Zahlen, dadurch reicht FP16 aus.
+#ifdef FP16
+#define FT half
+#define LD(p, k, i) (vload_half((k), (p)) + W[i])
+#define ST(p, k, i, v) vstore_half((v) - W[i], (k), (p))
+#else
+#define FT float
+#define LD(p, k, i) ((p)[k] + W[i])
+#define ST(p, k, i, v) ((p)[k] = (v) - W[i])
+#endif
 
 // Ein Schritt: Strömen (Pull) + Bounce-Back + BGK-Stoß, dazu Kraft per Impulsaustausch (Summe pro Arbeitsgruppe).
-__kernel void lbm3_step(__global const float* src, __global float* dst, __global const uchar* flag,
-                        __global float* gforce, float omega)
+// doForce = 0: Kraft nicht summieren (nur im letzten Schritt eines Pakets nötig).
+// writeVel = 1: Geschwindigkeit für den Rauch mitschreiben (spart einen eigenen Lesedurchgang).
+__kernel void lbm3_step(__global const FT* src, __global FT* dst, __global const uchar* flag,
+                        __global float* gforce, float omega, int doForce,
+                        __global float* vx, __global float* vy, __global float* vz, int writeVel)
 {
     int c = get_global_id(0);
     int lid = get_local_id(0);
@@ -436,7 +462,8 @@ __kernel void lbm3_step(__global const float* src, __global float* dst, __global
         int z = c / (NX * NY);
         if (flag[c] != 0)
         {
-            for (int i = 0; i < 19; i++) dst[i * N + c] = W[i];
+            for (int i = 0; i < 19; i++) ST(dst, i * N + c, i, W[i]);
+            if (writeVel) { vx[c] = 0.0f; vy[c] = 0.0f; vz[c] = 0.0f; }
         }
         else
         {
@@ -452,7 +479,7 @@ __kernel void lbm3_step(__global const float* src, __global float* dst, __global
                 int sc = sx + NX * (sy + NY * sz);
                 if (flag[sc] != 0)
                 {
-                    float v = src[OPP[i] * N + c];
+                    float v = LD(src, OPP[i] * N + c, OPP[i]);
                     f[i] = v;
                     // Kraft relativ zum Umgebungsdruck (Dichte 1): bei Körpern, die auf dem Boden stehen,
                     // drückt sonst der absolute Druck nur von oben. Für frei umströmte Körper ändert das nichts.
@@ -461,7 +488,7 @@ __kernel void lbm3_step(__global const float* src, __global float* dst, __global
                     fy += m * (float)CY[OPP[i]];
                     fz += m * (float)CZ[OPP[i]];
                 }
-                else f[i] = src[d * N + sc];
+                else f[i] = LD(src, d * N + sc, d);
             }
             float rho = 0.0f, ux = 0.0f, uy = 0.0f, uz = 0.0f;
             for (int i = 0; i < 19; i++)
@@ -471,15 +498,17 @@ __kernel void lbm3_step(__global const float* src, __global float* dst, __global
             }
             float inv = 1.0f / rho;
             ux *= inv; uy *= inv; uz *= inv;
+            if (writeVel) { vx[c] = ux; vy[c] = uy; vz[c] = uz; }
             float usq = 1.5f * (ux * ux + uy * uy + uz * uz);
             for (int i = 0; i < 19; i++)
             {
                 float cu = 3.0f * ((float)CX[i] * ux + (float)CY[i] * uy + (float)CZ[i] * uz);
                 float feq = W[i] * rho * (1.0f + cu + 0.5f * cu * cu - usq);
-                dst[i * N + c] = f[i] - omega * (f[i] - feq);
+                ST(dst, i * N + c, i, f[i] - omega * (f[i] - feq));
             }
         }
     }
+    if (!doForce) return;   // für alle Arbeitsgruppen gleich, darum ohne Gefahr vor den Barrieren
     __local float lf[3 * LOCAL];
     lf[lid] = fx; lf[LOCAL + lid] = fy; lf[2 * LOCAL + lid] = fz;
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -498,24 +527,37 @@ __kernel void lbm3_step(__global const float* src, __global float* dst, __global
     }
 }
 
-// Einlass (x = 0): Gleichgewicht mit uIn. Auslass (x = NX-1): Werte der Nachbarzelle übernehmen.
-__kernel void lbm3_bounds(__global float* dst, float uIn)
+// Einlass (x = 0): Gleichgewicht mit uIn.
+// Auslass (x = NX-1): Umgebungsdruck fest (Dichte 1), Geschwindigkeit und Nicht-Gleichgewichtsanteil von der Nachbarzelle.
+// Ohne festen Druck wächst die Masse im Kanal langsam an (bei FP16 schneller) und verfälscht den Auftrieb.
+__kernel void lbm3_bounds(__global FT* dst, float uIn)
 {
     int j = get_global_id(0);
     if (j >= NY * NZ) return;
     int y = j % NY, z = j / NY;
     int cIn = NX * (y + NY * z);
-    int cOut = cIn + NX - 1;
+    int cOut = cIn + NX - 1, cN = cOut - 1;
     float usq = 1.5f * uIn * uIn;
+    float fn[19];
+    float rho = 0.0f, ux = 0.0f, uy = 0.0f, uz = 0.0f;
     for (int i = 0; i < 19; i++)
     {
         float cu = 3.0f * (float)CX[i] * uIn;
-        dst[i * N + cIn] = W[i] * (1.0f + cu + 0.5f * cu * cu - usq);
-        dst[i * N + cOut] = dst[i * N + cOut - 1];
+        ST(dst, i * N + cIn, i, W[i] * (1.0f + cu + 0.5f * cu * cu - usq));
+        fn[i] = LD(dst, i * N + cN, i);
+        rho += fn[i]; ux += fn[i] * (float)CX[i]; uy += fn[i] * (float)CY[i]; uz += fn[i] * (float)CZ[i];
+    }
+    ux /= rho; uy /= rho; uz /= rho;
+    float us = 1.5f * (ux * ux + uy * uy + uz * uz);
+    for (int i = 0; i < 19; i++)
+    {
+        float cu = 3.0f * ((float)CX[i] * ux + (float)CY[i] * uy + (float)CZ[i] * uz);
+        float e = W[i] * (1.0f + cu + 0.5f * cu * cu - us);   // Gleichgewicht für Dichte 1
+        ST(dst, i * N + cOut, i, e + (fn[i] - rho * e));
     }
 }
 
-__kernel void lbm3_init(__global float* fa, __global float* fb, float uIn)
+__kernel void lbm3_init(__global FT* fa, __global FT* fb, float uIn)
 {
     int c = get_global_id(0);
     if (c >= N) return;
@@ -524,11 +566,11 @@ __kernel void lbm3_init(__global float* fa, __global float* fb, float uIn)
     {
         float cu = 3.0f * (float)CX[i] * uIn;
         float v = W[i] * (1.0f + cu + 0.5f * cu * cu - usq);
-        fa[i * N + c] = v; fb[i * N + c] = v;
+        ST(fa, i * N + c, i, v); ST(fb, i * N + c, i, v);
     }
 }
 
-__kernel void lbm3_macro(__global const float* src, __global const uchar* flag, __global float* out, int comp)
+__kernel void lbm3_macro(__global const FT* src, __global const uchar* flag, __global float* out, int comp)
 {
     int c = get_global_id(0);
     if (c >= N) return;
@@ -536,7 +578,7 @@ __kernel void lbm3_macro(__global const float* src, __global const uchar* flag, 
     float rho = 0.0f, m = 0.0f;
     for (int i = 0; i < 19; i++)
     {
-        float f = src[i * N + c];
+        float f = LD(src, i * N + c, i);
         rho += f;
         if (comp == 0) m += f * (float)CX[i];
         else if (comp == 1) m += f * (float)CY[i];
@@ -545,7 +587,7 @@ __kernel void lbm3_macro(__global const float* src, __global const uchar* flag, 
     out[c] = comp == 3 ? rho : m / rho;
 }
 
-__kernel void lbm3_slice(__global const float* src, __global const uchar* flag, __global float* out, int axis, int index, float invU)
+__kernel void lbm3_slice(__global const FT* src, __global const uchar* flag, __global float* out, int axis, int index, float invU)
 {
     int j = get_global_id(0);
     int count = NX * (axis == 0 ? NZ : NY);
@@ -556,13 +598,13 @@ __kernel void lbm3_slice(__global const float* src, __global const uchar* flag, 
     float rho = 0.0f, mx = 0.0f, my = 0.0f, mz = 0.0f;
     for (int i = 0; i < 19; i++)
     {
-        float f = src[i * N + c];
+        float f = LD(src, i * N + c, i);
         rho += f; mx += f * (float)CX[i]; my += f * (float)CY[i]; mz += f * (float)CZ[i];
     }
     out[j] = sqrt(mx * mx + my * my + mz * mz) / rho * invU;
 }
 
-__kernel void lbm3_coarse(__global const float* src, __global const uchar* flag, __global float* out, int s, int cnx, int cny, int cnz)
+__kernel void lbm3_coarse(__global const FT* src, __global const uchar* flag, __global float* out, int s, int cnx, int cny, int cnz)
 {
     int j = get_global_id(0);
     if (j >= cnx * cny * cnz) return;
@@ -573,28 +615,13 @@ __kernel void lbm3_coarse(__global const float* src, __global const uchar* flag,
     float rho = 0.0f, mx = 0.0f, my = 0.0f, mz = 0.0f;
     for (int q = 0; q < 19; q++)
     {
-        float f = src[q * N + c];
+        float f = LD(src, q * N + c, q);
         rho += f; mx += f * (float)CX[q]; my += f * (float)CY[q]; mz += f * (float)CZ[q];
     }
     out[3 * j] = mx / rho; out[3 * j + 1] = my / rho; out[3 * j + 2] = mz / rho;
 }
 
 // ---- Rauch ----
-
-__kernel void lbm3_vel(__global const float* src, __global const uchar* flag, __global float* ux, __global float* uy, __global float* uz)
-{
-    int c = get_global_id(0);
-    if (c >= N) return;
-    if (flag[c] != 0) { ux[c] = 0.0f; uy[c] = 0.0f; uz[c] = 0.0f; return; }
-    float rho = 0.0f, mx = 0.0f, my = 0.0f, mz = 0.0f;
-    for (int q = 0; q < 19; q++)
-    {
-        float f = src[q * N + c];
-        rho += f; mx += f * (float)CX[q]; my += f * (float)CY[q]; mz += f * (float)CZ[q];
-    }
-    float inv = 1.0f / rho;
-    ux[c] = mx * inv; uy[c] = my * inv; uz[c] = mz * inv;
-}
 
 // trilinear in Gitterkoordinaten (Zelle i liegt bei i)
 float trilin(__global const float* a, float x, float y, float z)

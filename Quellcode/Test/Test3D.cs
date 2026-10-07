@@ -24,6 +24,7 @@ static class Test3D
 
     static int Main(string[] args)
     {
+        if (args.Length >= 1 && args[0] == "bench") return Bench();
         // Für Kontrollrechnungen: Test3D.exe NX NY NZ KugelX Toleranz
         if (args.Length >= 5)
         {
@@ -43,13 +44,26 @@ static class Test3D
         Console.WriteLine("Gitter: " + NX + " x " + NY + " x " + NZ + " = " + (NX * NY * NZ / 1000000.0).ToString("0.0") + " Mio. Zellen");
         Console.WriteLine();
 
-        using (var lbm = new Lbm3D(NX, NY, NZ))
+        double cd16, cd32;
+        using (var lbm = new Lbm3D(NX, NY, NZ))   // Standard: FP16-Speicher
         {
+            Console.WriteLine("— Speicher FP16 (Standard) —");
+            Console.WriteLine();
             EmptyTunnel(lbm);
-            Sphere(lbm, 20);
+            cd16 = Sphere(lbm, 20);
             Sphere(lbm, 40);
             CubeOnFloor(lbm);
         }
+        using (var lbm = new Lbm3D(NX, NY, NZ, false))
+        {
+            Console.WriteLine("— Speicher FP32 (Vergleich) —");
+            Console.WriteLine();
+            cd32 = Sphere(lbm, 20);
+            CubeOnFloor(lbm);
+        }
+        double diff = Math.Abs(cd16 - cd32) / cd32;
+        Report("FP16 so genau wie FP32", diff < 0.005, "Cw " + cd16.ToString("0.0000") + " gegen " + cd32.ToString("0.0000")
+               + ", Unterschied " + (diff * 100).ToString("0.00") + " %");
 
         Console.WriteLine();
         Console.WriteLine(failed == 0 ? "ALLE TESTS BESTANDEN" : failed + " TEST(S) DURCHGEFALLEN");
@@ -95,7 +109,7 @@ static class Test3D
         Console.WriteLine();
     }
 
-    static void Sphere(Lbm3D lbm, double re)
+    static double Sphere(Lbm3D lbm, double re)
     {
         const double D = 24, R = D / 2;
         double cx = SphereX, cy = NY / 2.0 - 0.5, cz = NZ / 2.0 - 0.5;
@@ -146,6 +160,36 @@ static class Test3D
                "Cw = " + cd.ToString("0.000") + ", Referenz " + cdRef.ToString("0.000") + ", Abweichung " + (err * 100).ToString("+0.0;-0.0") + " %");
         Report("Querkraft fast null", cross < 0.01, "Querkraft / Widerstand = " + (cross * 100).ToString("0.000") + " %");
         Console.WriteLine();
+        return cd;
+    }
+
+    /// <summary>Tempo-Messung: Speicherform und Arbeitsgruppengröße auf zwei Gittergrößen.</summary>
+    static int Bench()
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        if (Lbm3D.DeviceName == null) { Console.WriteLine("Keine Grafikkarte: " + Lbm3D.InitError); return 2; }
+        Console.WriteLine("Tempo-Messung auf " + Lbm3D.DeviceName + " (Mio. Zellen-Schritte pro Sekunde, MLUPS)");
+        int[][] grids = { new[] { 256, 112, 112 }, new[] { 384, 160, 160 } };
+        foreach (var gsz in grids)
+            foreach (bool fp16 in new[] { false, true })
+                foreach (int loc in new[] { 64, 128, 256 })
+                {
+                    using (var lbm = new Lbm3D(gsz[0], gsz[1], gsz[2], fp16, loc))
+                    {
+                        lbm.SetSolid(new byte[lbm.N]);
+                        lbm.Reset(UIn);
+                        double fx, fy, fz;
+                        lbm.Step(200, 1.5f, UIn, out fx, out fy, out fz);   // aufwärmen
+                        var sw = Stopwatch.StartNew();
+                        const int steps = 1000;
+                        lbm.Step(steps, 1.5f, UIn, out fx, out fy, out fz);
+                        double mlups = (double)lbm.N * steps / sw.Elapsed.TotalSeconds / 1e6;
+                        double gbs = mlups * 1e6 * (19 * 2 * (fp16 ? 2 : 4) + 1) / 1e9;
+                        Console.WriteLine(string.Format("  {0,3}x{1,3}x{2,3}  {3}  Gruppe {4,3}:  {5,6:0} MLUPS  ({6,4:0} Schritte/s, ~{7:0} GB/s)",
+                            gsz[0], gsz[1], gsz[2], fp16 ? "FP16" : "FP32", loc, mlups, steps / sw.Elapsed.TotalSeconds, gbs));
+                    }
+                }
+        return 0;
     }
 
     static void CubeOnFloor(Lbm3D lbm)

@@ -16,6 +16,12 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   Einzige Berührungspunkte: Umschalter "2D | 3D" im Kopf von `MainForm` und die Fensterwechsel in `Program.cs`.
 - `Lbm3D.cs`: D3Q19-BGK-Löser auf der GPU (eigener OpenCL-Zugriff), nur GPU, kein CPU-Fallback (so gewollt).
   Kräfte per Impulsaustausch relativ zum Umgebungsdruck. Stabil bis etwa tau 0,52, darum Re im Fenster begrenzt.
+  Leistung: Verteilungen als FP16 gespeichert (f - W, gerechnet in FP32) = ~1,9x schneller, halber Speicher;
+  FP16 weicht < 0,5 % von FP32 ab (Test3D prüft das). Auslass mit festem Druck (Dichte 1), sonst driftet die Masse.
+  Kraftsumme nur im letzten Schritt eines Pakets, Rauch-Geschwindigkeit wird im Strömungsschritt mitgeschrieben.
+  RTX 5070 Ti: ~6900 MLUPS (FP16) gegen ~3650 (FP32), ~530-590 GB/s. `Test3D.exe bench` misst das.
+- CUDA bewusst nicht: der Löser ist speichergebunden, OpenCL läuft auf NVIDIA über denselben Treiber gleich schnell,
+  und CUDA bräuchte das Toolkit (NVRTC) auf jedem Rechner bzw. liefe nicht auf AMD/Intel.
 - `Mesh.cs`: STL (binär/Text) und OBJ laden, eingebaute Körper (Kugel, Ahmed-Körper, Würfel, Zylinder),
   `Placement` dreht/skaliert/setzt den Körper und wandelt ihn in Zellen um (Strahl-Parität entlang x).
 - `Scene.cs`: eigener Software-Renderer für die 3D-Ansicht (Tiefenpuffer, Kantenglättung, alle CPU-Kerne).
@@ -25,7 +31,10 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - `Form3D.cs`: 3D-Fenster. Achsen: x = Strömung, y = seitlich, z = oben. Darstellung: Stromlinien, Rauch,
   Schnittebene im Raum, nur Körper. Geladene Modelle werden automatisch ausgerichtet (`Mesh.AutoOrient`:
   längste Seite = x, flachste = oben, höheres Ende = hinten), Knöpfe X/Y/Z kippen um 90°, 180° tauscht vorne/hinten. Schrittzahl pro Bild nur nach GPU-Zeit
-  bemessen, sonst bremst das Zeichnen die Rechnung aus.
+  bemessen, sonst bremst das Zeichnen die Rechnung aus. Gerechnet wird in einem eigenen Thread (`SimLoop`), alle
+  GPU-Zugriffe unter `lock (gpu)` bzw. `EnterGpu/LeaveGpu`. Auflösung beim Start per Probe-Rechnung gewählt
+  (`PickResolution`: größtes Gitter mit >= ~300 Schritten/s, das in den Speicher passt). Kantenglättung und
+  Rauch-Auflösung passen sich automatisch an, wenn Zeichnen zu lange dauert.
 - Tests: `Test3D.exe` (Rechenkern: leerer Kanal, Kugel Re 20/40, Würfel auf dem Boden),
   `Vorschau3D.exe <Ordner>` (Import-Rundreise, Zellen, speichert Bilder vom 3D- und 2D-Fenster ohne Bildschirmfoto).
 - Rechner: PC RTX 5070 Ti (16 GB) + Core Ultra 7 265KF, 32 GB RAM; Laptop GTX 1660 Ti (6 GB, kleinere Gitter).
