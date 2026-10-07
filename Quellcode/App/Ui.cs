@@ -318,7 +318,7 @@ namespace Windkanal
     /// <summary>Karte mit großen runden Ecken und Titel; Inhalte zeichnet der Besitzer über das Paint-Ereignis.</summary>
     sealed class Card : Panel
     {
-        public const int Radius = 20, Pad = 20, Head = 58;
+        public const int Radius = 12, Pad = 16, Head = 48;
         public string Title;
 
         public Card(string title)
@@ -339,7 +339,7 @@ namespace Windkanal
             Theme.FillRound(g, Theme.Card, r, Radius);
             Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, Radius);
             if (!string.IsNullOrEmpty(Title))
-                Theme.Draw(g, Title, Theme.Title, Theme.Text, new Rectangle(Pad, 18, Width - 2 * Pad, 24), TextFormatFlags.VerticalCenter);
+                Theme.Draw(g, Title, Theme.Title, Theme.Text, new Rectangle(Pad, 12, Width - 2 * Pad, 24), TextFormatFlags.VerticalCenter);
             base.OnPaint(e);
         }
     }
@@ -377,9 +377,8 @@ namespace Windkanal
             }
             if (Pressed) fill = Theme.Mix(fill, Theme.Muted, 0.2f);
             if (!Enabled) { fill = Theme.Ctl; fg = Theme.Faint; }
-            if (!Primary) Theme.SoftShadow(g, RectangleF.Inflate(r, -3, -3), Height / 2f);
-            Theme.FillRound(g, fill, r, Height / 2f);
-            if (!Primary) Theme.StrokeRound(g, Theme.Border, r, Height / 2f);
+            Theme.FillRound(g, fill, r, 9);
+            if (!Primary) Theme.StrokeRound(g, Theme.Border, r, 9);
 
             bool icon = Icon != null && Theme.Icons != null;
             int tw = Text.Length > 0 ? Theme.Width(Text, Font) : 0;
@@ -465,18 +464,17 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Theme.Dark ? Theme.Card : Color.FromArgb(240, 242, 245), r, Height / 2f);
-            Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, Height / 2f);
+            Theme.FillRound(g, Theme.Dark ? Theme.Card : Color.FromArgb(240, 242, 245), r, 10);
+            Theme.StrokeRound(g, Theme.Dark ? Theme.Border : Color.White, r, 10);
             for (int i = 0; i < Items.Count; i++)
             {
                 var ir = ItemRect(i);
                 if (i == sel)
                 {
-                    Theme.SoftShadow(g, RectangleF.Inflate(ir, -3, -3), ir.Height / 2);
-                    Theme.FillRound(g, Theme.Dark ? Theme.CtlHover : Theme.Surface, ir, ir.Height / 2);
+                    Theme.FillRound(g, Theme.Dark ? Theme.CtlHover : Theme.Surface, ir, 7);
                 }
                 else if (i == hot)
-                    Theme.FillRound(g, Theme.Dark ? Theme.Surface : Theme.CtlHover, ir, ir.Height / 2);
+                    Theme.FillRound(g, Theme.Dark ? Theme.Surface : Theme.CtlHover, ir, 7);
                 Theme.Draw(g, Items[i], Font, i == sel ? Theme.Text : Theme.Muted, Rectangle.Round(ir),
                            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
@@ -676,8 +674,8 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 12);
-            Theme.StrokeRound(g, Theme.Border, r, 12);
+            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 8);
+            Theme.StrokeRound(g, Theme.Border, r, 8);
             string s = sel >= 0 && sel < Items.Count ? Items[sel] : "";
             Theme.Draw(g, s, Font, Theme.Text, new Rectangle(14, 0, Width - 44, Height - 1), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             float cx = Width - 20, cy = Height / 2f;
@@ -783,8 +781,8 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 12);
-            Theme.StrokeRound(g, Theme.Border, r, 12);
+            Theme.FillRound(g, Hover || Pressed ? Theme.CtlHover : Theme.Surface, r, 8);
+            Theme.StrokeRound(g, Theme.Border, r, 8);
             if (sel != null)
             {
                 Theme.Draw(g, sel.Category, Theme.Small, Theme.Muted, new Rectangle(14, 6, Width - 44, 16), TextFormatFlags.EndEllipsis);
@@ -940,9 +938,9 @@ namespace Windkanal
             Theme.Prepare(g);
             g.Clear(BackColor);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            Theme.FillRound(g, Theme.Surface, r, 12);
+            Theme.FillRound(g, Theme.Surface, r, 8);
             Color border = !valid ? Theme.Pink : box.Focused ? Theme.Accent : Theme.Border;
-            Theme.StrokeRound(g, border, r, 12);
+            Theme.StrokeRound(g, border, r, 8);
             Theme.Draw(g, Unit, Font, Theme.Muted, new Rectangle(0, 0, Width - 14, Height - 1), TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             Theme.Draw(g, Caption, Font, Theme.Muted, new Rectangle(14, 0, Width - 28, Height - 1), TextFormatFlags.VerticalCenter);
         }
@@ -962,8 +960,10 @@ namespace Windkanal
         {
             var g = e.Graphics;
             g.Clear(BackColor);
-            Theme.Draw(g, Text, Theme.SmallMed, Theme.Muted, new Rectangle(0, 0, Width, Height), TextFormatFlags.VerticalCenter);
-            int tw = Theme.Width(Text, Theme.SmallMed);
+            // Abschnittstitel in Großbuchstaben, wie in technischen Programmen
+            string t = Text.ToUpper(CultureInfo.GetCultureInfo("de-DE"));
+            Theme.Draw(g, t, Theme.SmallMed, Theme.Muted, new Rectangle(0, 0, Width, Height), TextFormatFlags.VerticalCenter);
+            int tw = Theme.Width(t, Theme.SmallMed);
             using (var p = new Pen(Theme.Border)) g.DrawLine(p, tw + 10, Height / 2, Width, Height / 2);
         }
     }

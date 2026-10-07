@@ -103,6 +103,12 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 ## Design
 - Kein "AI-Slop": keine generischen Schriften (Segoe UI, Arial, Inter vermeiden), keine violetten Verläufe.
 - Eng an Eliasʼ Referenzbilder anlehnen. Aktuelle Schrift: **Outfit** (`Quellcode/Fonts`). Hell- und Dunkelmodus.
+- Aufteilung (2D und 3D gleich, von Elias so gewünscht): Kopf (Logo, Ansichten, 2D/3D, Knöpfe), **Ansicht groß in der
+  Mitte**, **Einstellungen rechts** (Abschnitte OBJEKT · STRÖMUNG · GITTER · DARSTELLUNG · VERGLEICH bzw. SCHNITTEBENE,
+  scrollt bei kleinen Fenstern), **Ergebnisse unten** als technische Tabelle (Kennwert | Aktuell | Mittel | ± | B | Δ)
+  mit Verlauf bzw. Schnittbild daneben, **Statuszeile** ganz unten (Zustand, GPU, Gitter, Tempo, Meldungen).
+- Look „technischer, gleiche Farben“: Karten-Ecken 12, keine Schatten, Knöpfe/Felder mit Ecken 8–10 statt Pillen,
+  Abschnittstitel in Großbuchstaben.
 
 ## Neuer Rechner (z. B. Laptop)
 ```powershell
