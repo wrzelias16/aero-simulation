@@ -19,6 +19,7 @@ static class Vorschau3D
         string dir = args.Length > 0 ? args[0] : ".";
         Directory.CreateDirectory(dir);
         int fails = 0;
+        int recFails = 0;
 
         // 1. Import-Rundreise: eingebaute Kugel als STL (binär + Text) schreiben und wieder laden
         var sphere = Mesh.Sphere();
@@ -116,8 +117,25 @@ static class Vorschau3D
             Save(form, Path.Combine(dir, "fenster_" + names[shot] + ".png"));
             shot++;
             if (shot == 1) Find<Windkanal.DropDown>(form).SelectedIndex = 1;        // Ahmed-Körper
-            else if (shot == 2) Find<Windkanal.Segmented>(form).SelectedIndex = 1;   // Rauch
-            else if (shot == 3) Find<Windkanal.Segmented>(form).SelectedIndex = 2;   // Schnittebene
+            else if (shot == 2)
+            {
+                Find<Windkanal.Segmented>(form).SelectedIndex = 1;   // Rauch
+                ((Windkanal.FileMenu)Field(form, "fileMenu")).StartRecording(false);
+            }
+            else if (shot == 3)
+            {
+                FinishRecording(form, Path.Combine(dir, "aufnahme_rauch.gif"), ref recFails);
+                // Sitzung: speichern, verstellen, wieder laden
+                var sess = (System.Collections.Generic.Dictionary<string, string>)Call(form, "SaveSession");
+                Windkanal.Session.Write(Path.Combine(dir, "test.windkanal"), sess);
+                var back = Windkanal.Session.Read(Path.Combine(dir, "test.windkanal"));
+                Find<Windkanal.Segmented>(form).SelectedIndex = 2;   // Schnittebene (ändert die Ansicht)
+                Call(form, "LoadSession", back);
+                bool ok = (int)Field(form, "vizMode") == 1 && (int)Field(form, "sizePercent") == int.Parse(sess["groesse"]);
+                Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "3D-Sitzung: gespeichert und wieder geladen (Ansicht " + Field(form, "vizMode") + ", Größe " + Field(form, "sizePercent") + " %)");
+                if (!ok) recFails++;
+                Find<Windkanal.Segmented>(form).SelectedIndex = 2;   // Schnittebene
+            }
             else if (shot == 4) Find<Windkanal.Segmented>(form).SelectedIndex = 3;   // Oberflächendruck
             else { t.Stop(); form.Close(); }
         };
@@ -144,6 +162,7 @@ static class Vorschau3D
                     break;
                 case 1:
                     Save(f2, Path.Combine(dir, "fenster_2d_drs_zu.png"));
+                    ((Windkanal.FileMenu)Field(f2, "fileMenu")).StartRecording(true);
                     foreach (var b in All<Windkanal.FlatButton>(f2))
                         if (b.Text.StartsWith("DRS"))
                             typeof(Control).GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
@@ -160,6 +179,15 @@ static class Vorschau3D
                         Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "DRS in Echtzeit: offen nach " + secs.ToString("0.000") + " s (Soll 0,400 s), Stand " + (mot * 100).ToString("0") + " %");
                         if (!ok) fails++;
                         Save(f2, Path.Combine(dir, "fenster_2d_drs_offen.png"));
+                        FinishRecording(f2, Path.Combine(dir, "aufnahme_drs.mp4"), ref recFails);
+                        // 2D-Sitzung: speichern, Größe verstellen, wieder laden
+                        var sess = (System.Collections.Generic.Dictionary<string, string>)Call(f2, "SaveSession");
+                        var tb = (Windkanal.FlatSlider)Field(f2, "tbSize");
+                        tb.Value = tb.Value + 7;
+                        Call(f2, "LoadSession", sess);
+                        bool sok = (int)Field(f2, "sizePercent") == int.Parse(sess["groesse"]) && (float)Field(f2, "motion") >= 1;
+                        Console.WriteLine((sok ? "[OK]     " : "[FEHLER] ") + "2D-Sitzung: Größe " + Field(f2, "sizePercent") + " % (gespeichert " + sess["groesse"] + " %), DRS offen: " + ((float)Field(f2, "motion") >= 1));
+                        if (!sok) recFails++;
                         t2.Interval = 5000;
                     }
                     break;
@@ -173,8 +201,36 @@ static class Vorschau3D
         f2.Shown += delegate { t2.Start(); };
         Application.Run(f2);
 
+        fails += recFails;
         Console.WriteLine(fails == 0 ? "ALLE TESTS BESTANDEN" : fails + " TEST(S) DURCHGEFALLEN");
         return fails == 0 ? 0 : 1;
+    }
+
+    static object Field(object o, string name)
+    {
+        return o.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(o);
+    }
+
+    static object Call(object o, string name, params object[] args)
+    {
+        return o.GetType().GetMethod(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(o, args);
+    }
+
+    /// <summary>Aufnahme beenden ohne Speichern-Dialog und Datei in den Testordner kopieren.</summary>
+    static int FinishRecording(object form, string target, ref int fails)
+    {
+        var fm = (Windkanal.FileMenu)Field(form, "fileMenu");
+        var rec = fm.Rec;
+        fm.Rec = null;
+        rec.Finish();
+        long size = File.Exists(rec.TempFile) ? new FileInfo(rec.TempFile).Length : 0;
+        bool ok = rec.Error == null && rec.Frames > 5 && size > 10000;
+        if (ok) File.Copy(rec.TempFile, target, true);
+        Console.WriteLine((ok ? "[OK]     " : "[FEHLER] ") + "Aufnahme " + Path.GetFileName(target) + ": " + rec.Frames + " Bilder, "
+                          + (size / 1024) + " KB" + (rec.Error != null ? ", Fehler: " + rec.Error : ""));
+        if (!ok) fails++;
+        rec.Dispose();
+        return rec.Frames;
     }
 
     static System.Collections.Generic.List<T> All<T>(Control c) where T : Control

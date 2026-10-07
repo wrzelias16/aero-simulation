@@ -53,6 +53,14 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - Modelle werden mit `Quellcode/Modelle/Werkzeug/modelle_erzeugen.py` erzeugt. Achtung: das Skript schreibt alle
   Dateien mit LF neu; danach unveränderte Dateien mit `git ls-files -m Quellcode/Modelle | xargs git checkout --` zurücksetzen.
 
+## Datei-Menü (2D und 3D, `App/FileTools.cs`, `App/Recorder.cs`)
+- Sitzung speichern/öffnen (`*.windkanal`, Textzeilen „schlüssel: wert“, Strg+S / Strg+O); eine 3D-Sitzung im
+  2D-Fenster geöffnet wechselt nach 3D und umgekehrt (Events OpenIn3D/OpenIn2D in Program.cs).
+- Bild (PNG) und Aufnahme in Echtzeit (Strg+R): MP4 über Media Foundation (H.264, in Windows enthalten, kein ffmpeg)
+  oder GIF (eigener Encoder, Median-Cut-Palette, LZW). Aufgenommen wird die Ansicht-Karte per DrawToBitmap.
+- Länge (m) und Tempo (km/h) ergeben die echte Reynoldszahl; die Simulation übernimmt sie bis zum Reglerende
+  (2D 20 000, 3D 1 Mio.), Kräfte gelten fürs echte Tempo (3D: N und kg Abtrieb in „Kennzahlen“).
+
 ## Bauen und Testen
 - Bauen (ohne SDK, nutzt csc aus .NET Framework 4.8):
   `powershell -ExecutionPolicy Bypass -File Quellcode\build.ps1` -> `Quellcode\bin\Windkanal2D.exe`

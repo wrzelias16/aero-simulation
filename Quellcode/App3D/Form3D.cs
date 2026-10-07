@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
+using System.Linq;
 using System.Windows.Forms;
 using Windkanal;
 
@@ -41,7 +42,11 @@ namespace Windkanal3D
         float[] fineTris;          // fein unterteilte Oberfläche für die Druckfarben (große Flächen bekommen sonst nur eine Farbe)
         int[] pressureLut;
         double lastPressure;
-        FlatButton btnShot;
+        FlatButton btnFile;
+        FileMenu fileMenu;
+        double lastRecPaint;
+        /// <summary>Eine 2D-Sitzung wurde hier geöffnet: im 2D-Fenster laden.</summary>
+        public event Action<string> OpenIn2D;
         FlowField field;
         List<float[]> rakeLines, rakeSmoke;
         double lastField, lastLines;
@@ -93,11 +98,13 @@ namespace Windkanal3D
         FlatSlider tbYaw, tbPitch, tbSize, tbRe, tbSlice;
         Toggle chkGround;
         HintLabel hintModel, hintRe;
+        NumberBox numMeters, numKmh;
+        const double NuAir = 1.516e-5, RhoAir = 1.204;   // Luft bei 20 °C
         readonly ToolTip tips = new ToolTip();
 
         public Form3D()
         {
-            Text = "Windkanal 3D";
+            Text = "Windkanal · 3D";
             var wa = Screen.PrimaryScreen.WorkingArea;
             ClientSize = new Size(Math.Min(1600, wa.Width - 40), Math.Min(960, wa.Height - 60));
             MinimumSize = new Size(1280, 800);
@@ -172,11 +179,11 @@ namespace Windkanal3D
                 UpdateSceneFlow();
                 cardView.Invalidate();
             };
-            btnShot = new FlatButton { Icon = "\uE722", BackColor = Theme.Bg };
-            if (Theme.Icons == null) btnShot.Text = "Bild";
-            tips.SetToolTip(btnShot, "3D-Ansicht als Bild speichern (PNG)");
-            btnShot.Click += delegate { SaveShot(); };
-            Controls.AddRange(new Control[] { segViz, segMode, btnRun, btnReset, btnTheme, btnShot });
+            btnFile = new FlatButton { Icon = "\uE712", BackColor = Theme.Bg };
+            if (Theme.Icons == null) btnFile.Text = "Datei";
+            tips.SetToolTip(btnFile, "Datei: Sitzung speichern und öffnen, Bild speichern, Video oder GIF aufnehmen");
+            btnFile.Click += delegate { fileMenu.Show(btnFile); };
+            Controls.AddRange(new Control[] { segViz, segMode, btnRun, btnReset, btnTheme, btnFile });
 
             // --- 3D-Ansicht
             cardView = new Card("3D-Ansicht");
@@ -270,6 +277,21 @@ namespace Windkanal3D
             tbRe = (FlatSlider)add(new FlatSlider { Text = "Reynoldszahl Re", Minimum = 0, Maximum = 200, Value = ReToSlider(reynolds) }, 46, 2);
             tbRe.ValueChanged += delegate { reynolds = SliderToRe(tbRe.Value); UpdateFlowParams(); UpdateLabels(); };
             hintRe = (HintLabel)add(new HintLabel(""), 18, 6);
+            // echte Länge (in Strömungsrichtung) und echtes Tempo: daraus die echte Reynoldszahl und die Kräfte in Newton
+            int hw = (w - 8) / 2;
+            numMeters = new NumberBox { Caption = "Länge", Minimum = 0.01m, Maximum = 500m, Increment = 0.1m, Decimals = 2, Unit = "m", BackColor = Theme.Card };
+            numMeters.SetBounds(Card.Pad, y, hw, 40);
+            numMeters.Value = 1.04m;
+            numKmh = new NumberBox { Caption = "Tempo", Minimum = 0.1m, Maximum = 1500m, Increment = 10m, Decimals = 0, Unit = "km/h", BackColor = Theme.Card };
+            numKmh.SetBounds(Card.Pad + hw + 8, y, w - hw - 8, 40);
+            numKmh.Value = 100m;
+            numMeters.ValueChanged += delegate { ApplyRealSpeed(); };
+            numKmh.ValueChanged += delegate { ApplyRealSpeed(); };
+            tips.SetToolTip(numKmh, "Geschwindigkeit des echten Objekts. Daraus folgt die Reynoldszahl; die Kräfte in der Karte „Kennzahlen“ gelten für dieses Tempo.");
+            tips.SetToolTip(numMeters, "Echte Länge des Objekts in Strömungsrichtung");
+            cardSet.Controls.Add(numMeters);
+            cardSet.Controls.Add(numKmh);
+            y += 48;
             cbRes = (DropDown)add(new DropDown(), 40, 12);
             for (int i = 0; i < ResNames.Length; i++)
             {
@@ -294,6 +316,7 @@ namespace Windkanal3D
             tbSlice.ValueChanged += delegate { slicePos = tbSlice.Value; UpdateLabels(); UpdateSlicePlane(); };
 
             Controls.AddRange(new Control[] { cardView, cardCd, cardCl, cardKenn, cardSlice, cardSet });
+            fileMenu = new FileMenu(this, cardView, SaveSession, LoadSession, ShowWarning);
             ResumeLayout();
             LayoutAll();
             UpdateLabels();
@@ -310,10 +333,22 @@ namespace Windkanal3D
         }
 
         /// <summary>Sinnvolle Startwerte je Körper (Autos auf den Boden, Kugeln in die Mitte).</summary>
+        /// <summary>Echte Länge und echtes Tempo -> Reynoldszahl; die Simulation nimmt sie bis zum Reglerende (1 Mio.).</summary>
+        void ApplyRealSpeed()
+        {
+            if (tbRe == null || numKmh == null) return;
+            double re = (double)numKmh.Value / 3.6 * (double)numMeters.Value / NuAir;
+            int v = Math.Max(tbRe.Minimum, Math.Min(tbRe.Maximum, ReToSlider(Math.Max(10, re))));
+            if (v != tbRe.Value) tbRe.Value = v;
+            UpdateLabels();
+            InvalidateCards();
+        }
+
         void ApplyModelDefaults()
         {
             suppress = true;
             bool car = mesh.Name.StartsWith("Ahmed");
+            if (car && numMeters != null) numMeters.Value = 1.04m;
             chkGround.Checked = onGround = car;
             tbSize.Value = sizePercent = car ? 50 : mesh.Name == "Kugel" ? 25 : 30;
             tbYaw.Value = yaw = 0;
@@ -338,7 +373,7 @@ namespace Windkanal3D
 
             int bh = 40, by0 = (TopH - bh) / 2 + 2, x = W - Outer;
             x -= 116; btnRun.SetBounds(x, by0, 116, bh);
-            foreach (var b in new[] { btnReset, btnTheme, btnShot })
+            foreach (var b in new[] { btnReset, btnTheme, btnFile })
             {
                 int bw = b.Text.Length > 0 ? Theme.Width(b.Text, b.Font) + 32 : bh;
                 x -= 10 + bw;
@@ -432,14 +467,19 @@ namespace Windkanal3D
             if (hintRe != null)
             {
                 bool limited = reUsed < reynolds * 0.999;
+                double reReal = numKmh == null ? 0 : (double)numKmh.Value / 3.6 * (double)numMeters.Value / NuAir;
                 hintRe.Text = limited ? "Begrenzt auf Re " + FormatRe(reUsed) + " (höher wird der Rechenkern instabil)"
-                                      : reynolds > 2000 ? "Mit Turbulenzmodell (LES) · Bezug: Länge des Körpers"
-                                                        : "Bezugslänge: Länge des Körpers in Strömungsrichtung";
+                            : reReal > reynolds * 1.02 ? "Echt Re " + FormatRe(reReal) + ", gerechnet mit " + FormatRe(reynolds) + " (Grenze)"
+                            : reynolds > 2000 ? "Mit Turbulenzmodell (LES) · Bezug: Länge des Körpers"
+                            : "Bezugslänge: Länge des Körpers in Strömungsrichtung";
                 hintRe.Invalidate();
             }
         }
 
-        static string FormatRe(double re) { return re.ToString(re >= 100 ? "N0" : "0.#", De); }
+        static string FormatRe(double re)
+        {
+            return re >= 1e6 ? (re / 1e6).ToString("0.0", De) + " Mio." : re.ToString(re >= 100 ? "N0" : "0.#", De);
+        }
 
         static double SliderToRe(int v)
         {
@@ -672,6 +712,7 @@ namespace Windkanal3D
 
         void OnKey(object sender, KeyEventArgs e)
         {
+            if (!(ActiveControl is TextBox) && fileMenu.HandleKey(e)) { e.Handled = true; e.SuppressKeyPress = true; return; }
             if (e.KeyCode == Keys.Space)
             {
                 SetRunning(!running);
@@ -730,7 +771,99 @@ namespace Windkanal3D
             if (now - lastSlice > 120) { lastSlice = now; RenderSlice(); }
             UpdateFlowView(now);
             InvalidateCards();
+            CaptureFrame(now);
         }
+
+        void CaptureFrame(double now)
+        {
+            if (!fileMenu.Recording) return;
+            fileMenu.Capture();
+            if (now - lastRecPaint > 500) { lastRecPaint = now; cardView.Invalidate(new Rectangle(0, 0, cardView.Width, Card.Head)); }
+        }
+
+        // ------------------------------------------------------------------ Sitzung
+
+        Dictionary<string, string> SaveSession()
+        {
+            var d = new Dictionary<string, string>();
+            d["modus"] = "3D";
+            if (mesh.SourcePath != null) d["modell-datei"] = mesh.SourcePath;
+            else d["modell"] = mesh.Name;
+            d["ausrichtung"] = string.Join(" ", Array.ConvertAll(mesh.Rot, v => v.ToString()));
+            d["drehung"] = yaw.ToString();
+            d["anstellwinkel"] = pitch.ToString();
+            d["groesse"] = sizePercent.ToString();
+            d["boden"] = Session.Yes(onGround);
+            d["reynolds"] = Session.F(reynolds);
+            d["aufloesung"] = resIndex.ToString();
+            d["ansicht"] = vizMode.ToString();
+            d["schnitt"] = sliceAxis.ToString();
+            d["schnitt-lage"] = slicePos.ToString();
+            d["laenge-m"] = Session.F((double)numMeters.Value);
+            d["tempo-kmh"] = Session.F((double)numKmh.Value);
+            d["kamera"] = string.Join(" ", new[] { scene.Yaw, scene.Pitch, scene.Distance, scene.PanX, scene.PanY }.Select(Session.F));
+            return d;
+        }
+
+        void LoadSession(Dictionary<string, string> d)
+        {
+            if (d["modus"] == "2D")
+            {
+                if (OpenIn2D != null) OpenIn2D(fileMenu.LastPath);
+                return;
+            }
+            string v;
+            Mesh m = null;
+            if (d.TryGetValue("modell-datei", out v))
+            {
+                m = meshes.Find(x => x.SourcePath != null && string.Equals(x.SourcePath, v, StringComparison.OrdinalIgnoreCase));
+                if (m == null)
+                {
+                    try { m = Mesh.Load(v); meshes.Add(m); }
+                    catch (Exception ex) { ShowWarning("Modell der Sitzung nicht gefunden: " + ex.Message); return; }
+                }
+            }
+            else if (d.TryGetValue("modell", out v)) m = meshes.Find(x => x.Name == v);
+            if (m == null) { ShowWarning("Modell der Sitzung nicht gefunden"); return; }
+            mesh = m;
+            FillModelList();
+            if (d.TryGetValue("ausrichtung", out v))
+            {
+                var r = v.Split(' ');
+                if (r.Length == 9) mesh.Rot = Array.ConvertAll(r, int.Parse);
+            }
+            int ri = Session.I(d, "aufloesung", resIndex);
+            suppress = true;
+            tbYaw.Value = yaw = Session.I(d, "drehung", 0);
+            tbPitch.Value = pitch = Session.I(d, "anstellwinkel", 0);
+            tbSize.Value = sizePercent = Math.Max(tbSize.Minimum, Math.Min(tbSize.Maximum, Session.I(d, "groesse", sizePercent)));
+            chkGround.Checked = onGround = Session.B(d, "boden", onGround);
+            tbRe.Value = ReToSlider(Session.D(d, "reynolds", reynolds));
+            reynolds = SliderToRe(tbRe.Value);
+            numMeters.Value = (decimal)Session.D(d, "laenge-m", (double)numMeters.Value);
+            numKmh.Value = (decimal)Session.D(d, "tempo-kmh", (double)numKmh.Value);
+            tbSlice.Value = slicePos = Session.I(d, "schnitt-lage", slicePos);
+            if (ri != resIndex && ri >= 0 && ri < cbRes.Items.Count) { cbRes.SelectedIndex = ri; resIndex = ri; CreateSolver(); }
+            suppress = false;
+            segSlice.SelectedIndex = Math.Max(0, Math.Min(1, Session.I(d, "schnitt", sliceAxis)));
+            if (d.TryGetValue("kamera", out v))
+            {
+                var c = v.Split(' ');
+                if (c.Length == 5)
+                {
+                    var inv = System.Globalization.CultureInfo.InvariantCulture;
+                    scene.Yaw = double.Parse(c[0], inv); scene.Pitch = double.Parse(c[1], inv); scene.Distance = double.Parse(c[2], inv);
+                    scene.PanX = double.Parse(c[3], inv); scene.PanY = double.Parse(c[4], inv);
+                }
+            }
+            UpdateLabels();
+            Rebuild();
+            segViz.SelectedIndex = Math.Max(0, Math.Min(4, Session.I(d, "ansicht", vizMode)));
+            ShowWarning("Sitzung geöffnet");
+        }
+
+        /// <summary>Sitzung aus einer Datei öffnen (auch aus dem 2D-Fenster heraus).</summary>
+        public void LoadSessionFile(string path) { fileMenu.OpenSession(path); }
 
         void BuildRakes()
         {
@@ -959,21 +1092,6 @@ namespace Windkanal3D
             scene.TriColors = col;
         }
 
-        void SaveShot()
-        {
-            if (sceneBmp == null) return;
-            using (var dlg = new SaveFileDialog { Filter = "PNG-Bild (*.png)|*.png", FileName = "windkanal-3d-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png",
-                                                   InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures) })
-            {
-                if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                try
-                {
-                    using (var copy = new Bitmap(sceneBmp)) copy.Save(dlg.FileName, System.Drawing.Imaging.ImageFormat.Png);
-                    ShowWarning("Bild gespeichert: " + System.IO.Path.GetFileName(dlg.FileName));
-                }
-                catch (Exception ex) { ShowWarning("Bild konnte nicht gespeichert werden: " + ex.Message); }
-            }
-        }
 
         void UpdateSceneFlow()
         {
@@ -1021,6 +1139,8 @@ namespace Windkanal3D
             int x = Card.Pad + tw + 10;
             x += Theme.Chip(g, running && lbm != null ? "Läuft" : "Pausiert", x, 18, running && lbm != null ? Theme.Green : Theme.Muted,
                             Theme.Tint(running && lbm != null ? Theme.Green : Theme.Muted), 24, true) + 8;
+            if (fileMenu != null && fileMenu.Recording)
+                x += Theme.Chip(g, fileMenu.RecordingText, x, 18, Theme.Pink, Theme.Tint(Theme.Pink), 24, true) + 8;
             if (warning != null)
                 Theme.Chip(g, warning, x, 18, Theme.Orange, Theme.Tint(Theme.Orange));
             Theme.Draw(g, "Linke Maustaste: drehen  ·  Rechte Maustaste: verschieben  ·  Mausrad: zoomen  ·  Doppelklick: Ansicht zurücksetzen",
@@ -1193,6 +1313,18 @@ namespace Windkanal3D
                        new Rectangle(Card.Pad, BottomH - 40, W - 2 * Card.Pad, 18), TextFormatFlags.VerticalCenter);
         }
 
+        /// <summary>Widerstand in Newton und Ab- bzw. Auftrieb in kg beim eingestellten echten Tempo.</summary>
+        string RealForceText()
+        {
+            if (history.Count == 0 || place == null || numKmh == null || place.LengthX < 1) return "Kräfte: –";
+            double v = (double)numKmh.Value / 3.6, scale = (double)numMeters.Value / place.LengthX;
+            double area = place.FrontalCells * scale * scale;   // echte Stirnfläche in m²
+            double q = 0.5 * RhoAir * v * v * area;
+            double drag = (settled ? cwMean : cw) * q, lift = (settled ? caMean : ca) * q;
+            string l = lift < 0 ? "Abtrieb " + (-lift / 9.81).ToString("N0", De) + " kg" : "Auftrieb " + (lift / 9.81).ToString("N0", De) + " kg";
+            return "Bei " + numKmh.Value.ToString("0", De) + " km/h: " + drag.ToString("N0", De) + " N  ·  " + l;
+        }
+
         void OnKennPaint(object sender, PaintEventArgs e)
         {
             var g = e.Graphics;
@@ -1209,7 +1341,7 @@ namespace Windkanal3D
             Theme.Draw(g, cells, Theme.SmallMed, Theme.Text, new Rectangle(Card.Pad, 130, W - 2 * Card.Pad, 18), TextFormatFlags.VerticalCenter);
             string speed = lbm == null ? "keine GPU" : mlups > 0 ? (mlups * 1e6 / lbm.N).ToString("0", De) + " Schritte/s" : "–";
             Theme.Draw(g, speed, Theme.Small, Theme.Muted, new Rectangle(Card.Pad, 130, W - 2 * Card.Pad, 18), TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
-            Theme.Draw(g, "Seitenkraft cs " + (history.Count > 0 ? cs.ToString("0.000", De) : "–"), Theme.Small, Theme.Muted,
+            Theme.Draw(g, RealForceText(), Theme.Small, Theme.Muted,
                        new Rectangle(Card.Pad, 152, W - 2 * Card.Pad, 18), TextFormatFlags.VerticalCenter);
             Color on = settled ? Theme.Green : Theme.Accent;
             using (var b = new SolidBrush(on)) g.FillEllipse(b, Card.Pad, BottomH - 22, 7, 7);

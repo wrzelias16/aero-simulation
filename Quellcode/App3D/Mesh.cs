@@ -16,6 +16,8 @@ namespace Windkanal3D
     {
         public readonly float[] V;
         public readonly string Name;
+        /// <summary>Datei, aus der das Netz geladen wurde (null bei eingebauten Körpern).</summary>
+        public string SourcePath;
         /// <summary>Grundausrichtung (Zeilen = Windkanal-Achsen x, y, z in Modell-Achsen), nur Vielfache von 90°.</summary>
         public int[] Rot = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 
@@ -108,7 +110,7 @@ namespace Windkanal3D
             if (v.Length < 9) throw new Exception("Die Datei enthält keine Dreiecke.");
             for (int i = 0; i < v.Length; i++)
                 if (float.IsNaN(v[i]) || float.IsInfinity(v[i])) throw new Exception("Die Datei enthält ungültige Koordinaten.");
-            var m = new Mesh(v, name);
+            var m = new Mesh(v, name) { SourcePath = Path.GetFullPath(path) };
             m.AutoOrient();
             return m;
         }

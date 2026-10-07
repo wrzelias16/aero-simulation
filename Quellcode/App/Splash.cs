@@ -29,7 +29,7 @@ namespace Windkanal
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(W, H);
             BackColor = Theme.Card;
-            Text = "Windkanal 2D";
+            Text = "Windkanal";
             ShowInTaskbar = true;
             TopMost = true;
             DoubleBuffered = true;
@@ -127,8 +127,8 @@ namespace Windkanal
             int ty = Pad + StageH + 20;
             Theme.DrawLogo(g, Pad + 2, ty, 42, Theme.Ink, Theme.OnInk);
             Theme.Draw(g, "windkanal", fWord, Theme.Text, new Rectangle(Pad + 56, ty - 2, 240, 28), TextFormatFlags.VerticalCenter);
-            Theme.Draw(g, "2D-Strömungssimulation", fSmall, Theme.Muted, new Rectangle(Pad + 57, ty + 24, 240, 18), TextFormatFlags.VerticalCenter);
-            string ver = "Version 1.1";
+            Theme.Draw(g, "Strömungssimulation in 2D und 3D", fSmall, Theme.Muted, new Rectangle(Pad + 57, ty + 24, 240, 18), TextFormatFlags.VerticalCenter);
+            string ver = "Version " + AppInfo.Version;
             int vw = TextRenderer.MeasureText(ver, fSmallMed, Size.Empty, TextFormatFlags.NoPadding).Width + 20;
             Theme.FillRound(g, Theme.Ctl, new RectangleF(W - Pad - vw, ty + 9, vw, 24), 12);
             Theme.Draw(g, ver, fSmallMed, Theme.Muted, new Rectangle(W - Pad - vw, ty + 9, vw, 24), TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);

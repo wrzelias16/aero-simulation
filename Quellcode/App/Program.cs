@@ -2,14 +2,20 @@ using System;
 using System.Reflection;
 using System.Windows.Forms;
 
-[assembly: AssemblyTitle("Windkanal 2D")]
-[assembly: AssemblyProduct("Windkanal 2D")]
-[assembly: AssemblyDescription("2D-Windkanal-Simulation (Lattice-Boltzmann)")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyTitle("Windkanal")]
+[assembly: AssemblyProduct("Windkanal")]
+[assembly: AssemblyDescription("2D- und 3D-Windkanal-Simulation (Lattice-Boltzmann)")]
+[assembly: AssemblyVersion("0.0.2.0")]
+[assembly: AssemblyFileVersion("0.0.2.0")]
 
 namespace Windkanal
 {
+    /// <summary>Versionsnummer an einer Stelle (Schema siehe CLAUDE.md: v0.0.x bis zur stabilen 3D-Version v1.0.0).</summary>
+    static class AppInfo
+    {
+        public const string Version = "0.0.2";
+    }
+
     static class Program
     {
         [STAThread]
@@ -22,6 +28,7 @@ namespace Windkanal
             if (splash != null) report = splash.Report;
             var form = new MainForm(report);
             form.SwitchTo3D += delegate { Show3D(form); };
+            form.OpenIn3D += path => { Show3D(form); if (form3D != null && form3D.Visible) form3D.LoadSessionFile(path); };
             if (splash != null)
             {
                 splash.WaitReady(1800);
@@ -48,6 +55,7 @@ namespace Windkanal
                 }
                 form2D.Cursor = Cursors.Default;
                 form3D.SwitchTo2D += delegate { Swap(form3D, form2D); form2D.RefreshTheme(); };
+                form3D.OpenIn2D += path => { Swap(form3D, form2D); form2D.RefreshTheme(); form2D.LoadSessionFile(path); };
                 form3D.FormClosed += delegate { form2D.Close(); };   // 3D schließen beendet das Programm
             }
             else form3D.RefreshTheme();

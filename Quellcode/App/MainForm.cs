@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -48,15 +49,18 @@ namespace Windkanal
         static readonly string[] MotionSpeedNames = { "Zeitlupe 0,25×", "Zeitlupe 0,5×", "Echtzeit 1×", "Schneller 2×", "Schneller 4×", "Physikalisch" };
         DropDown cbMotionSpeed;
         int motionSpeed = 2;
-        double motionWall, motionAir, lastTickMs = -1, lastMotionSeconds = -1;
+        double motionWall, motionAir, lastTickMs = -1, lastMotionSeconds = -1, lastRecPaint;
         /// <summary>Wird ausgelöst, wenn im Kopf "3D" gewählt wird.</summary>
         public event EventHandler SwitchTo3D;
         DropDown cbRes;
         ModelPicker cbShape;
         FlatSlider tbAngle, tbSize, tbRe;
         Toggle chkSmoke, chkWalls;
-        FlatButton btnRun, btnReset, btnInfo, btnTheme;
-        NumberBox numMeters;
+        FlatButton btnRun, btnReset, btnInfo, btnTheme, btnFile;
+        FileMenu fileMenu;
+        /// <summary>Eine 3D-Sitzung wurde hier geöffnet: im 3D-Fenster laden.</summary>
+        public event Action<string> OpenIn3D;
+        NumberBox numMeters, numKmh;
         InfoRows rowsGeo, rowsPhys;
         HintLabel hintModel;
         readonly ToolTip tips = new ToolTip();
@@ -86,7 +90,7 @@ namespace Windkanal
         /// <param name="report">meldet den Ladefortschritt an das Startfenster (Text, 0..1)</param>
         public MainForm(Action<string, float> report)
         {
-            Text = "Windkanal 2D";
+            Text = "Windkanal · 2D";
             var wa = Screen.PrimaryScreen.WorkingArea;
             ClientSize = new Size(Math.Min(1600, wa.Width - 40), Math.Min(960, wa.Height - 60));
             MinimumSize = new Size(1280, 800);
@@ -158,7 +162,11 @@ namespace Windkanal
                 segMode.SelectedIndex = 0;
                 if (SwitchTo3D != null) SwitchTo3D(this, EventArgs.Empty);
             };
-            Controls.AddRange(new Control[] { segView, segMode, btnRun, btnReset, btnInfo, btnTheme });
+            btnFile = new FlatButton { Icon = "\uE712", BackColor = Theme.Bg };
+            if (Theme.Icons == null) btnFile.Text = "Datei";
+            tips.SetToolTip(btnFile, "Datei: Sitzung speichern und öffnen, Bild speichern, Video oder GIF aufnehmen");
+            btnFile.Click += delegate { fileMenu.Show(btnFile); };
+            Controls.AddRange(new Control[] { segView, segMode, btnRun, btnReset, btnInfo, btnTheme, btnFile });
 
             // --- Strömungsbild
             cardView = new Card("Strömungsbild");
@@ -255,24 +263,33 @@ namespace Windkanal
             chkWalls.CheckedChanged += delegate { solver.NoSlipWalls = chkWalls.Checked; stats.Clear(); };
 
             // --- Umrechnung auf Luft
-            cardAir = new Card("Umrechnung auf Luft");
+            cardAir = new Card("Echte Größe und Tempo");
             cardAir.Paint += (s, e) =>
             {
                 Theme.Prepare(e.Graphics);
                 int tw = Theme.Width(cardAir.Title, Theme.Title);
                 Theme.Chip(e.Graphics, "20 °C", Card.Pad + tw + 10, 18, Theme.Muted, Theme.Ctl);
             };
-            numMeters = new NumberBox { Caption = "Bezugslänge", Minimum = 0.001m, Maximum = 100m, Increment = 0.01m, Decimals = 3, Unit = "m", BackColor = Theme.Card };
-            numMeters.SetBounds(Card.Pad, Card.Head, w, 40);
+            // Länge und Tempo des echten Objekts: daraus folgt die echte Reynoldszahl. Die Simulation übernimmt sie,
+            // soweit das Gitter sie schafft (darüber ändern sich die Beiwerte meist nur noch wenig); die Kräfte gelten fürs echte Tempo.
+            int hw = (w - 8) / 2;
+            numMeters = new NumberBox { Caption = "Länge", Minimum = 0.001m, Maximum = 100m, Increment = 0.01m, Decimals = 3, Unit = "m", BackColor = Theme.Card };
+            numMeters.SetBounds(Card.Pad, Card.Head, hw, 40);
             numMeters.Value = 0.1m;
-            numMeters.ValueChanged += delegate { UpdateReadouts(); };
+            numMeters.ValueChanged += delegate { ApplyRealSpeed(); };
+            numKmh = new NumberBox { Caption = "Tempo", Minimum = 0.1m, Maximum = 1500m, Increment = 10m, Decimals = 0, Unit = "km/h", BackColor = Theme.Card };
+            numKmh.SetBounds(Card.Pad + hw + 8, Card.Head, w - hw - 8, 40);
+            numKmh.Value = 100m;
+            numKmh.ValueChanged += delegate { ApplyRealSpeed(); };
+            tips.SetToolTip(numKmh, "Geschwindigkeit des echten Objekts. Daraus folgt die Reynoldszahl; Widerstand und Auftrieb in Newton gelten für dieses Tempo.");
             rowsPhys = new InfoRows { BackColor = Theme.Card };
             rowsPhys.SetBounds(Card.Pad, Card.Head + 52, w, 3 * InfoRows.Row);
             var note = new HintLabel("Kräfte je Meter Spannweite (2D-Profil)") { BackColor = Theme.Card };
             note.SetBounds(Card.Pad, Card.Head + 52 + 3 * InfoRows.Row + 6, w, 18);
-            cardAir.Controls.AddRange(new Control[] { numMeters, rowsPhys, note });
+            cardAir.Controls.AddRange(new Control[] { numMeters, numKmh, rowsPhys, note });
 
             Controls.AddRange(new Control[] { cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir });
+            fileMenu = new FileMenu(this, cardView, SaveSession, LoadSession, ShowMessage);
             ResumeLayout();
             LayoutAll();
             UpdateModelHint();
@@ -296,7 +313,7 @@ namespace Windkanal
             // Kopfzeile
             int bh = 40, by0 = (TopH - bh) / 2 + 2, x = W - Outer;
             x -= 116; btnRun.SetBounds(x, by0, 116, bh);
-            foreach (var b in new[] { btnReset, btnInfo, btnTheme })
+            foreach (var b in new[] { btnReset, btnInfo, btnTheme, btnFile })
             {
                 int bw = b.Text.Length > 0 ? Theme.Width(b.Text, b.Font) + 32 : bh;
                 x -= 10 + bw;
@@ -384,6 +401,21 @@ namespace Windkanal
             }
         }
 
+        static string ReText(double re)
+        {
+            return re >= 1e6 ? F(re / 1e6, "0.0") + " Mio." : F(re, re >= 100 ? "#,0" : "0.#");
+        }
+
+        /// <summary>Echte Länge und echtes Tempo -> Reynoldszahl; die Simulation nimmt sie, höchstens bis zum Reglerende.</summary>
+        void ApplyRealSpeed()
+        {
+            if (tbRe == null) return;
+            double re = (double)numKmh.Value / 3.6 * (double)numMeters.Value / NuAir;
+            int v = Math.Max(tbRe.Minimum, Math.Min(tbRe.Maximum, ReToSlider(Math.Max(10, re))));
+            if (v != tbRe.Value) tbRe.Value = v;   // löst die übliche Re-Änderung aus
+            UpdateReadouts();
+        }
+
         static double SliderToRe(int v)
         {
             double re = 10 * Math.Pow(2000, v / 200.0);
@@ -459,6 +491,7 @@ namespace Windkanal
 
         void OnKey(object sender, KeyEventArgs e)
         {
+            if (!(ActiveControl is TextBox) && fileMenu.HandleKey(e)) { e.Handled = true; e.SuppressKeyPress = true; return; }
             if (e.KeyCode == Keys.Space && !(ActiveControl is TextBox))
             {
                 SetRunning(!running);
@@ -546,6 +579,77 @@ namespace Windkanal
             stats.Clear();
             dirty = true;
         }
+
+        // ------------------------------------------------------------ Sitzung
+
+        void ShowMessage(string text)
+        {
+            warning = text;
+            warningUntil = clock.Elapsed.TotalMilliseconds + 7000;
+            UpdateStatus();
+        }
+
+        Dictionary<string, string> SaveSession()
+        {
+            var d = new Dictionary<string, string>();
+            d["modus"] = "2D";
+            if (model.IsCustom) ShowMessage("Hinweis: eine eigene Zeichnung wird nicht mitgespeichert, nur die Einstellungen.");
+            else d["modell"] = model.Id;
+            d["groesse"] = sizePercent.ToString();
+            d["winkel"] = angleDeg.ToString();
+            d["reynolds"] = Session.F(reynolds);
+            d["aufloesung"] = resIndex.ToString();
+            d["ansicht"] = ((int)viewMode).ToString();
+            d["rauchlinien"] = Session.Yes(showSmoke);
+            d["waende-reibung"] = Session.Yes(chkWalls.Checked);
+            d["laenge-m"] = Session.F((double)numMeters.Value);
+            d["tempo-kmh"] = Session.F((double)numKmh.Value);
+            if (model.HasMotion)
+            {
+                d["bewegung"] = Session.F(motion >= 0.5f ? 1 : 0);
+                d["bewegung-tempo"] = motionSpeed.ToString();
+            }
+            return d;
+        }
+
+        void LoadSession(Dictionary<string, string> d)
+        {
+            if (d["modus"] == "3D")
+            {
+                if (OpenIn3D != null) OpenIn3D(fileMenu.LastPath);
+                return;
+            }
+            string id;
+            Model m = d.TryGetValue("modell", out id) ? ModelLibrary.Find(id) : null;
+            if (m != null && m != model) cbShape.Selected = m;   // setzt die Startwerte des Modells
+            int r = Session.I(d, "aufloesung", resIndex);
+            if (r != resIndex && r >= 0 && r < cbRes.Items.Count) cbRes.SelectedIndex = r;
+            suppress = true;
+            tbSize.Value = sizePercent = Math.Max(tbSize.Minimum, Math.Min(tbSize.Maximum, Session.I(d, "groesse", sizePercent)));
+            tbAngle.Value = angleDeg = Math.Max(tbAngle.Minimum, Math.Min(tbAngle.Maximum, Session.I(d, "winkel", angleDeg)));
+            tbRe.Value = ReToSlider(Session.D(d, "reynolds", reynolds));
+            reynolds = SliderToRe(tbRe.Value);
+            numMeters.Value = (decimal)Session.D(d, "laenge-m", (double)numMeters.Value);
+            numKmh.Value = (decimal)Session.D(d, "tempo-kmh", (double)numKmh.Value);
+            suppress = false;
+            segView.SelectedIndex = Math.Max(0, Math.Min(3, Session.I(d, "ansicht", (int)viewMode)));
+            chkSmoke.Checked = Session.B(d, "rauchlinien", showSmoke);
+            chkWalls.Checked = Session.B(d, "waende-reibung", chkWalls.Checked);
+            UpdateSliderLabels();
+            RebuildGeometry(true);
+            if (model.HasMotion)
+            {
+                cbMotionSpeed.SelectedIndex = Math.Max(0, Math.Min(MotionSpeeds.Length - 1, Session.I(d, "bewegung-tempo", motionSpeed)));
+                motion = Session.D(d, "bewegung", 0) >= 0.5 ? 1 : 0;
+                motionDir = 0;
+                ApplyMotionMask();
+                UpdateMotionButton();
+            }
+            ShowMessage("Sitzung geöffnet");
+        }
+
+        /// <summary>Sitzung aus einer Datei öffnen (auch aus dem 3D-Fenster heraus).</summary>
+        public void LoadSessionFile(string path) { fileMenu.OpenSession(path); }
 
         // ------------------------------------------------------------ bewegliche Teile
 
@@ -695,6 +799,12 @@ namespace Windkanal
                 frames++;
             }
 
+            if (fileMenu.Recording)
+            {
+                fileMenu.Capture();
+                if (now - lastRecPaint > 500) { lastRecPaint = now; cardView.Invalidate(new Rectangle(0, 0, cardView.Width, Card.Head)); }
+            }
+
             if (now - fpsClock >= 1000)
             {
                 double dt = now - fpsClock;
@@ -752,11 +862,13 @@ namespace Windkanal
             rowsGeo.WarnRow = coarse ? 2 : -1;
 
             double Lm = (double)numMeters.Value;
-            double v = reynolds * NuAir / Lm;
+            double v = (double)numKmh.Value / 3.6;
+            double reReal = v * Lm / NuAir;
             double qd = 0.5 * RhoAir * v * v;
             double useCd = settled ? meanCd : curCd, useCl = settled ? meanCl : curCl;
-            rowsPhys.Set(new[] { "Anströmung v", "Widerstand FW", "Auftrieb FA" },
-                         new[] { Sig(v) + " m/s  ·  " + Sig(v * 3.6) + " km/h", Sig(useCd * qd * Lm) + " N/m", Sig(useCl * qd * Lm) + " N/m" });
+            string reText = ReText(reReal) + (Math.Abs(reReal - reynolds) > 0.02 * reReal ? "  ·  Simulation " + ReText(reynolds) : "");
+            rowsPhys.Set(new[] { "Reynoldszahl echt", "Widerstand FW", "Auftrieb FA" },
+                         new[] { reText, Sig(useCd * qd * Lm) + " N/m", Sig(useCl * qd * Lm) + " N/m" });
 
             foreach (var c in new[] { cardCd, cardCl, cardKenn, cardChart }) c.Invalidate();
             cardView.Invalidate(new Rectangle(0, 0, cardView.Width, Card.Head));
@@ -777,7 +889,7 @@ namespace Windkanal
                     {
                         double u = Math.Sqrt(solver.Ux[c] * solver.Ux[c] + solver.Uy[c] * solver.Uy[c]) / solver.U0;
                         double cp = (solver.Rho[c] - solver.RhoInf) / 3.0 / (0.5 * solver.U0 * solver.U0);
-                        double vInf = reynolds * NuAir / (double)numMeters.Value;
+                        double vInf = (double)numKmh.Value / 3.6;
                         text = "|u| / U∞ = " + F(u, "0.00") + "   ·   cp = " + F(cp, "0.00") + "   ·   ≈ " + Sig(u * vInf) + " m/s";
                     }
                 }
@@ -807,6 +919,8 @@ namespace Windkanal
                 int x = Card.Pad + Theme.Width(cardView.Title, Theme.Title) + 12;
                 Color c = running ? Theme.Green : Theme.Orange;
                 x += Theme.Chip(g, running ? "Läuft" : "Pausiert", x, 18, c, Theme.Tint(c), 24, true) + 6;
+                if (fileMenu != null && fileMenu.Recording)
+                    x += Theme.Chip(g, fileMenu.RecordingText, x, 18, Theme.Pink, Theme.Tint(Theme.Pink), 24, true) + 6;
                 bool movable = model != null && model.HasMotion && !model.IsCustom;
                 if (!movable) x += Theme.Chip(g, solver.Backend, x, 18, Theme.Muted, Theme.Ctl) + 6;
                 if (movable && (motionDir != 0 || motion > 0 || lastMotionSeconds >= 0))
