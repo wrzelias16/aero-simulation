@@ -98,8 +98,8 @@ namespace Windkanal3D
 
         public readonly int NX, NY, NZ, N;
         readonly int groups;
-        IntPtr program, kStep, kBounds, kInit, kMacro;
-        IntPtr bufA, bufB, bFlag, bForce, bMacro;
+        IntPtr program, kStep, kBounds, kInit, kMacro, kSlice;
+        IntPtr bufA, bufB, bFlag, bForce, bMacro, bSlice;
         bool swapped;
         readonly float[] forceHost;
 
@@ -133,12 +133,14 @@ namespace Windkanal3D
             kBounds = Kernel("lbm3_bounds");
             kInit = Kernel("lbm3_init");
             kMacro = Kernel("lbm3_macro");
+            kSlice = Kernel("lbm3_slice");
 
             bufA = Buffer((long)Q * N * 4);
             bufB = Buffer((long)Q * N * 4);
             bFlag = Buffer(N);
             bForce = Buffer(groups * 3L * 4);
             bMacro = Buffer(N * 4L);
+            bSlice = Buffer((long)nx * Math.Max(ny, nz) * 4);
         }
 
         IntPtr Kernel(string name)
@@ -213,13 +215,29 @@ namespace Windkanal3D
             return data;
         }
 
+        /// <summary>
+        /// Geschwindigkeitsbetrag geteilt durch uIn in einer Ebene: axis 0 = Seitenschnitt (x-z bei y = index),
+        /// axis 1 = Draufsicht (x-y bei z = index). Feste Zellen = -1. Länge NX * NZ bzw. NX * NY, Zeile für Zeile in x.
+        /// </summary>
+        public float[] ReadSlice(int axis, int index, float uIn)
+        {
+            int count = NX * (axis == 0 ? NZ : NY);
+            index = Math.Max(0, Math.Min((axis == 0 ? NY : NZ) - 1, index));
+            Arg(kSlice, 0, Src); Arg(kSlice, 1, bFlag); Arg(kSlice, 2, bSlice); Arg(kSlice, 3, axis); Arg(kSlice, 4, index);
+            Arg(kSlice, 5, 1.0f / uIn);
+            Run(kSlice, count);
+            var data = new float[count];
+            Check(CL.clEnqueueReadBuffer(queue, bSlice, 1, UIntPtr.Zero, (UIntPtr)(count * 4L), data, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
+            return data;
+        }
+
         public void Dispose()
         {
-            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro }) if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
-            foreach (var k in new[] { kStep, kBounds, kInit, kMacro }) if (k != IntPtr.Zero) CL.clReleaseKernel(k);
+            foreach (var b in new[] { bufA, bufB, bFlag, bForce, bMacro, bSlice }) if (b != IntPtr.Zero) CL.clReleaseMemObject(b);
+            foreach (var k in new[] { kStep, kBounds, kInit, kMacro, kSlice }) if (k != IntPtr.Zero) CL.clReleaseKernel(k);
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
-            bufA = bufB = bFlag = bForce = bMacro = IntPtr.Zero;
-            kStep = kBounds = kInit = kMacro = IntPtr.Zero;
+            bufA = bufB = bFlag = bForce = bMacro = bSlice = IntPtr.Zero;
+            kStep = kBounds = kInit = kMacro = kSlice = IntPtr.Zero;
             program = IntPtr.Zero;
         }
 
@@ -291,9 +309,12 @@ __kernel void lbm3_step(__global const float* src, __global float* dst, __global
                 {
                     float v = src[OPP[i] * N + c];
                     f[i] = v;
-                    fx += 2.0f * v * (float)CX[OPP[i]];
-                    fy += 2.0f * v * (float)CY[OPP[i]];
-                    fz += 2.0f * v * (float)CZ[OPP[i]];
+                    // Kraft relativ zum Umgebungsdruck (Dichte 1): bei Körpern, die auf dem Boden stehen,
+                    // drückt sonst der absolute Druck nur von oben. Für frei umströmte Körper ändert das nichts.
+                    float m = 2.0f * (v - W[i]);
+                    fx += m * (float)CX[OPP[i]];
+                    fy += m * (float)CY[OPP[i]];
+                    fz += m * (float)CZ[OPP[i]];
                 }
                 else f[i] = src[d * N + sc];
             }
@@ -377,6 +398,23 @@ __kernel void lbm3_macro(__global const float* src, __global const uchar* flag, 
         else if (comp == 2) m += f * (float)CZ[i];
     }
     out[c] = comp == 3 ? rho : m / rho;
+}
+
+__kernel void lbm3_slice(__global const float* src, __global const uchar* flag, __global float* out, int axis, int index, float invU)
+{
+    int j = get_global_id(0);
+    int count = NX * (axis == 0 ? NZ : NY);
+    if (j >= count) return;
+    int x = j % NX, r = j / NX;
+    int c = axis == 0 ? x + NX * (index + NY * r) : x + NX * (r + NY * index);
+    if (flag[c] != 0) { out[j] = -1.0f; return; }
+    float rho = 0.0f, mx = 0.0f, my = 0.0f, mz = 0.0f;
+    for (int i = 0; i < 19; i++)
+    {
+        float f = src[i * N + c];
+        rho += f; mx += f * (float)CX[i]; my += f * (float)CY[i]; mz += f * (float)CZ[i];
+    }
+    out[j] = sqrt(mx * mx + my * my + mz * mz) / rho * invU;
 }
 ";
     }

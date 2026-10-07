@@ -73,7 +73,7 @@ $app = Join-Path $bin 'Windkanal2D.exe'
     /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:$app `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
-    $modelRes (Join-Path $root 'App\*.cs')
+    $modelRes (Join-Path $root 'App\*.cs') (Join-Path $root 'App3D\*.cs')
 if ($LASTEXITCODE -ne 0) { throw 'App-Build fehlgeschlagen' }
 
 # --- Validierungstest (Konsole) ---
@@ -94,6 +94,15 @@ $test3d = Join-Path $bin 'Test3D.exe'
 & $csc /nologo /optimize+ /platform:x64 /out:$test3d `
     (Join-Path $root 'App3D\Lbm3D.cs') (Join-Path $root 'Test\Test3D.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Test3D-Build fehlgeschlagen' }
+
+# --- 3D-Vorschau (prüft Import und Zellen, speichert Bilder des 3D-Fensters) ---
+$preview3d = Join-Path $bin 'Vorschau3D.exe'
+& $csc /nologo /unsafe /optimize+ /platform:x64 /main:Vorschau3D `
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:$preview3d `
+    "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
+    "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
+    $modelRes (Join-Path $root 'App\*.cs') (Join-Path $root 'App3D\*.cs') (Join-Path $root 'Test\Vorschau3D.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Vorschau3D-Build fehlgeschlagen' }
 
 # --- Installer (App als eingebettete Ressource) ---
 $setup = Join-Path $bin 'Setup.exe'

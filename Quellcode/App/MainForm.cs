@@ -37,7 +37,9 @@ namespace Windkanal
         // Oberfläche: Karten auf hellem bzw. dunklem Grund
         Card cardView, cardCd, cardCl, cardKenn, cardChart, cardSet, cardAir;
         Canvas view;
-        Segmented segView;
+        Segmented segView, segMode;
+        /// <summary>Wird ausgelöst, wenn im Kopf "3D" gewählt wird.</summary>
+        public event EventHandler SwitchTo3D;
         DropDown cbRes;
         ModelPicker cbShape;
         FlatSlider tbAngle, tbSize, tbRe;
@@ -96,6 +98,8 @@ namespace Windkanal
             timer.Tick += OnTick;
             Shown += delegate { timer.Start(); };
             FormClosing += delegate { timer.Stop(); };
+            // solange das 3D-Fenster offen ist, rechnet 2D nicht im Hintergrund weiter
+            VisibleChanged += delegate { if (Visible) timer.Start(); else timer.Stop(); };
             KeyDown += OnKey;
         }
 
@@ -135,7 +139,15 @@ namespace Windkanal
             btnInfo.Click += delegate { ShowInfo(); };
             btnTheme.Click += delegate { SwitchTheme(); };
             UpdateThemeButton();
-            Controls.AddRange(new Control[] { segView, btnRun, btnReset, btnInfo, btnTheme });
+            segMode = new Segmented { BackColor = Theme.Bg };
+            segMode.Items.AddRange(new[] { "2D", "3D" });
+            segMode.SelectedIndexChanged += delegate
+            {
+                if (segMode.SelectedIndex != 1) return;
+                segMode.SelectedIndex = 0;
+                if (SwitchTo3D != null) SwitchTo3D(this, EventArgs.Empty);
+            };
+            Controls.AddRange(new Control[] { segView, segMode, btnRun, btnReset, btnInfo, btnTheme });
 
             // --- Strömungsbild
             cardView = new Card("Strömungsbild");
@@ -268,6 +280,8 @@ namespace Windkanal
                 x -= 10 + bw;
                 b.SetBounds(x, by0, bw, bh);
             }
+            int mw = segMode.PreferredWidth;
+            segMode.SetBounds(x - 18 - mw, (TopH - 44) / 2 + 2, mw, 44);
             int sw = segView.PreferredWidth;
             segView.SetBounds(Math.Max(240, Outer + (lw - sw) / 2 + 40), (TopH - 44) / 2 + 2, sw, 44);
 
@@ -317,6 +331,12 @@ namespace Windkanal
         {
             Theme.Apply(!Theme.Dark);
             Theme.SaveDark(Theme.Dark);
+            RefreshTheme();
+        }
+
+        /// <summary>Farben neu anwenden (auch nach einem Wechsel im 3D-Fenster).</summary>
+        public void RefreshTheme()
+        {
             BackColor = Theme.Bg;
             ForeColor = Theme.Text;
             Recolor(this);

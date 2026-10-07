@@ -10,6 +10,8 @@ using Windkanal3D;
 ///    Querkräfte müssen fast null sein (die Kugel ist symmetrisch).
 ///    Kontrollrechnung (RTX 5070 Ti): 256x128x128 -> +12,1 % / +10,6 %; 448x224x224 -> +7,4 % / +6,5 %.
 ///    Die Abweichung schrumpft mit größerem Kanal, kommt also von den Wänden und nicht vom Löser.
+/// 3. Würfel auf dem Boden: der Auftrieb muss klein bleiben (früher drückte der absolute Druck nur von oben,
+///    weil unter dem Körper keine Luft ist, und ergab ca ≈ -900).
 /// Rückgabe: 0 = bestanden, 1 = durchgefallen, 2 = keine Grafikkarte.
 /// </summary>
 static class Test3D
@@ -46,6 +48,7 @@ static class Test3D
             EmptyTunnel(lbm);
             Sphere(lbm, 20);
             Sphere(lbm, 40);
+            CubeOnFloor(lbm);
         }
 
         Console.WriteLine();
@@ -142,6 +145,28 @@ static class Test3D
         Report("Widerstandsbeiwert", !double.IsNaN(cd) && Math.Abs(err) < 0.15,
                "Cw = " + cd.ToString("0.000") + ", Referenz " + cdRef.ToString("0.000") + ", Abweichung " + (err * 100).ToString("+0.0;-0.0") + " %");
         Report("Querkraft fast null", cross < 0.01, "Querkraft / Widerstand = " + (cross * 100).ToString("0.000") + " %");
+        Console.WriteLine();
+    }
+
+    static void CubeOnFloor(Lbm3D lbm)
+    {
+        const int A = 24;
+        Console.WriteLine("Test Würfel auf dem Boden, Re = 20 (Kante " + A + " Zellen)");
+        var solid = new byte[lbm.N];
+        int x0 = 80, y0 = NY / 2 - A / 2;
+        for (int z = 0; z < A; z++)
+            for (int y = y0; y < y0 + A; y++)
+                for (int x = x0; x < x0 + A; x++) solid[x + NX * (y + NY * z)] = 1;
+        lbm.SetSolid(solid);
+        lbm.Reset(UIn);
+        double nu = UIn * A / 20.0;
+        float omega = (float)(1.0 / (3.0 * nu + 0.5));
+        double fx, fy, fz;
+        lbm.Step(4000, omega, UIn, out fx, out fy, out fz);
+        double q = 0.5 * UIn * UIn * A * A;
+        double cw = fx / q, ca = fz / q;
+        Report("Werte gültig", !double.IsNaN(cw) && cw > 0, "cw = " + cw.ToString("0.000"));
+        Report("Auftrieb plausibel", Math.Abs(ca) < 1.5, "ca = " + ca.ToString("0.000") + " (muss klein sein)");
         Console.WriteLine();
     }
 }

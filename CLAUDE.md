@@ -10,6 +10,21 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - Rendering und Rauch-Partikel laufen noch auf der CPU (nächster Perf-Schritt: Bild auf GPU zeichnen, zurückgestellt).
 - **Nächstes Ziel: 3D-Version.** Elias will, dass 2D "genau da bleibt, wo es ist".
 
+## 3D-Version (Ordner `Quellcode/App3D`, Namensraum `Windkanal3D`)
+- 2D und 3D sind **getrennt**: 3D nutzt Design/Bedienelemente aus `App` (Theme, Card, FlatButton …) nur lesend und
+  ändert keinen 2D-Code. Gemeinsames lieber nach `App3D` kopieren als das 2D-Original umbauen.
+  Einzige Berührungspunkte: Umschalter "2D | 3D" im Kopf von `MainForm` und die Fensterwechsel in `Program.cs`.
+- `Lbm3D.cs`: D3Q19-BGK-Löser auf der GPU (eigener OpenCL-Zugriff), nur GPU, kein CPU-Fallback (so gewollt).
+  Kräfte per Impulsaustausch relativ zum Umgebungsdruck. Stabil bis etwa tau 0,52, darum Re im Fenster begrenzt.
+- `Mesh.cs`: STL (binär/Text) und OBJ laden, eingebaute Körper (Kugel, Ahmed-Körper, Würfel, Zylinder),
+  `Placement` dreht/skaliert/setzt den Körper und wandelt ihn in Zellen um (Strahl-Parität entlang x).
+- `Scene.cs`: eigener Software-Renderer für die 3D-Ansicht (Tiefenpuffer, Kantenglättung, alle CPU-Kerne).
+- `Form3D.cs`: 3D-Fenster. Achsen: x = Strömung, y = seitlich, z = oben.
+- Tests: `Test3D.exe` (Rechenkern: leerer Kanal, Kugel Re 20/40, Würfel auf dem Boden),
+  `Vorschau3D.exe <Ordner>` (Import-Rundreise, Zellen, speichert Bilder vom 3D- und 2D-Fenster ohne Bildschirmfoto).
+- Rechner: PC RTX 5070 Ti (16 GB) + Core Ultra 7 265KF, 32 GB RAM; Laptop GTX 1660 Ti (6 GB, kleinere Gitter).
+  CUDA ist auf dem PC installiert; Rechenkern-Optimierung ist bewusst zurückgestellt.
+
 ## Bauen und Testen
 - Bauen (ohne SDK, nutzt csc aus .NET Framework 4.8):
   `powershell -ExecutionPolicy Bypass -File Quellcode\build.ps1` -> `Quellcode\bin\Windkanal2D.exe`
