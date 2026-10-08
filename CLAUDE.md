@@ -9,6 +9,18 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
 - GPU-Löser (OpenCL, CPU-Fallback), neues UI (Schrift Outfit, Hell/Dunkel, Startfenster), Rauchmodus,
   79 Modelle als Textdateien (`Quellcode/Modelle/LIESMICH.md`, keine echten CAD-Daten), Anzeige "Feinstes Detail".
 - Rendering und Rauch-Partikel laufen noch auf der CPU (nächster Perf-Schritt: Bild auf GPU zeichnen, zurückgestellt).
+
+## 2D: Leistung (Branch v1.0.3-performance-update)
+- Vorgabe von Elias: "maximale Leistung ohne Qualitätsverlust" = **Ergebnisse bitgleich**. Prüfung: `Bench2D.exe pruef beide paket`
+  (Fingerabdrücke von Kräften, Feldern, Rauch, Bildern; vorher/nachher und GPU/CPU gleich). FP16 in 2D deshalb bewusst **nicht**.
+- GPU (A): Makrofelder nur am Paketende (+ Spalten x=1, NX-2, + vor Kick), feste Kernel-Argumente einmal gesetzt, Rauch-Rückverfolgung
+  einmal je Bild (`smoke_prep`), Rechnen ohne Warten (`BeginSteps`/`EndSteps`, Paketgröße aus OpenCL-Zeitstempeln), früher `clFlush`,
+  eigenständige Grafikkarte vor eingebauter. Arbeitsgruppe 128 (64 gleich, 32/256 langsamer, 2D-NDRange war ~10 % langsamer).
+- CPU (B): SIMD mit `System.Numerics.Vector4` (in .NET 4.8 enthalten, bitgleich; `Vector<T>` gibt es dort nicht ohne NuGet),
+  Pakete statt Einzelschritte, Rauch mit vorbereiteten Gitterzellen/Gewichten, Puffer tauschen statt kopieren.
+- CUDA in 2D ebenfalls nicht: speichergebunden, OpenCL erreicht auf der GTX 1660 Ti ~79 % der Speicherbandbreite (~3100 MLUPS).
+- Laptop (GTX 1660 Ti): **Lüfter kaputt** (laut Elias), GPU 90-96 °C schon im Leerlauf, drosselt auf 300 MHz. Messungen dort nur
+  abwechselnd alt/neu vergleichen, absolute Zahlen schwanken stark; verlässliche Zahlen auf dem PC messen. `Bench2D.exe gpu|cpu` zeigt, wo die Zeit bleibt.
 - 3D ist seit v1.0.0 drin. Elias will, dass 2D "genau da bleibt, wo es ist" (2D-Löser und ValidationTest unverändert).
 
 ## 3D-Version (Ordner `Quellcode/App3D`, Namensraum `Windkanal3D`)
@@ -82,7 +94,8 @@ Repo: github.com/wrzelias16/aero-simulation (privat). Ausführliche Technik steh
   Anzeige „Windkanal“, Ordner/Registry/exe behalten die alten Namen (Windkanal2D), damit Updates die Installation finden.
 - Versionsnummer an einer Stelle: `App/AppInfo.cs` (Startfenster, Installer, Windows-Apps-Eintrag).
 - Startfenster und Installer zeigen `FlowStage` (angedeutete Wirbelstraße + Rauch, keine echte Simulation). Test: `Quellcode/Test/ValidationTest.cs`
-  (muss nach Löser-Änderungen weiter dieselben Ergebnisse liefern).
+  (muss nach Löser-Änderungen weiter dieselben Ergebnisse liefern), dazu `Quellcode/Test/Bench2D.cs` (Fingerabdrücke + Zeitmessung).
+- `Solver.cs` braucht `/r:System.Numerics.dll` (Vector4); build.ps1 setzt das bei allen Programmen, die Solver.cs enthalten.
 - `*.exe` und `Quellcode/bin/` stehen in `.gitignore` und kommen nicht über GitHub; auf jedem Rechner neu bauen.
 
 ## Versionsnummern (Git-Tags)

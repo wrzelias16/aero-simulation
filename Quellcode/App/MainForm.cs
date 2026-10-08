@@ -70,7 +70,7 @@ namespace Windkanal
         Particles particlesB;
         readonly Renderer rendererB = new Renderer();
         readonly ForceStats statsB = new ForceStats(400000);
-        readonly double[] batchFxB = new double[500], batchFyB = new double[500];
+        readonly double[] batchFxB = new double[Solver.MaxPending], batchFyB = new double[Solver.MaxPending];
         Model modelB;
         float motionB, refLenB, frontalB;
         double curCdB, curClB, meanCdB, meanClB;
@@ -99,7 +99,7 @@ namespace Windkanal
         readonly Timer timer = new Timer();
         readonly Stopwatch clock = Stopwatch.StartNew();
         double lastUi, fpsClock, stepMsAcc, mlups, fps, msPerStep = 1;
-        readonly double[] batchFx = new double[500], batchFy = new double[500];
+        readonly double[] batchFx = new double[Solver.MaxPending], batchFy = new double[Solver.MaxPending];
         long stepsAcc;
         int frames;
         string warning;
@@ -996,34 +996,10 @@ namespace Windkanal
             lastTickMs = now;
             if (running)
             {
-                var sw = Stopwatch.StartNew();
-                int steps = 0;
-                float q = 0.5f * solver.U0 * solver.U0 * refLen;
                 // während einer Bewegung so viel rechnen, wie ins Bild passt (volle Grafikkarte), sonst wie bisher
                 bool full = MotionActive;
                 double budget = full ? 12 : 22;   // kurze Bilder: Bewegung trifft die Uhr auf etwa 15 ms genau
-                int maxSteps = full ? 1000000 : 500;
-                do
-                {
-                    // Pakete so groß wählen, dass sie ins Zeitbudget passen (GPU rechnet ein Paket ohne Pause durch)
-                    double left = budget - sw.Elapsed.TotalMilliseconds;
-                    int batch = solver.OnGpu ? (int)Math.Max(1, Math.Min(batchFx.Length, 0.8 * left / Math.Max(1e-4, msPerStep))) : 1;
-                    batch = Math.Min(batch, maxSteps - steps);
-                    double t0 = sw.Elapsed.TotalMilliseconds;
-                    solver.StepMany(batch, batchFx, batchFy);
-                    if (compare && solverB != null)
-                    {
-                        solverB.StepMany(batch, batchFxB, batchFyB);
-                        float qB = 0.5f * solverB.U0 * solverB.U0 * refLenB;
-                        for (int k = 0; k < batch; k++) statsB.Add((float)(batchFxB[k] / qB), (float)(batchFyB[k] / qB));
-                    }
-                    double dt = sw.Elapsed.TotalMilliseconds - t0;
-                    msPerStep = 0.7 * msPerStep + 0.3 * dt / batch;
-                    for (int k = 0; k < batch; k++) stats.Add((float)(batchFx[k] / q), (float)(batchFy[k] / q));
-                    steps += batch;
-                } while (sw.Elapsed.TotalMilliseconds < budget && steps < maxSteps);
-                stepMsAcc += sw.Elapsed.TotalMilliseconds;
-                stepsAcc += steps;
+                int steps = solver.OnGpu ? FinishGpuBatch() : RunCpuSteps(budget, full);
 
                 if (!solver.IsStable())
                 {
@@ -1035,8 +1011,8 @@ namespace Windkanal
                 double tickMs = prevTick < 0 ? 16 : Math.Min(100, now - prevTick);
                 AdvanceMotion(steps, tickMs);
                 solver.AdvectSmoke(steps);
-                if (showSmoke && viewMode != ViewMode.Rauch) particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
-                if (compare && solverB != null)
+                bool bOk = compare && solverB != null;
+                if (bOk)
                 {
                     if (!solverB.IsStable())
                     {
@@ -1045,7 +1021,18 @@ namespace Windkanal
                         warningUntil = now + 9000;
                     }
                     solverB.AdvectSmoke(steps);
-                    if (showSmoke && viewMode != ViewMode.Rauch) particlesB.Update(solverB, steps, 2.5f * solverB.NX / solverB.U0);
+                }
+                if (solver.OnGpu)
+                {
+                    // Rauch noch vor dem nächsten Paket holen (sonst wartet das Lesen auf das ganze Paket),
+                    // dann das nächste Paket starten: die Grafikkarte rechnet, während hier Partikel und Bild entstehen
+                    if (viewMode == ViewMode.Rauch) { solver.ReadSmoke(); if (bOk) solverB.ReadSmoke(); }
+                    StartGpuBatch(budget, full);
+                }
+                if (showSmoke && viewMode != ViewMode.Rauch)
+                {
+                    particles.Update(solver, steps, 2.5f * solver.NX / solver.U0);
+                    if (bOk) particlesB.Update(solverB, steps, 2.5f * solverB.NX / solverB.U0);
                 }
                 dirty = true;
             }
@@ -1085,6 +1072,73 @@ namespace Windkanal
                 lastUi = now;
                 UpdateReadouts();
                 UpdateStatus();
+            }
+        }
+
+        // ------------------------------------------------------------ Rechnen (CPU im Zeitbudget, GPU ohne Warten)
+
+        /// <summary>CPU: rechnet, bis das Zeitbudget verbraucht ist (in Paketen, damit Zwischenschritte weniger schreiben).</summary>
+        int RunCpuSteps(double budget, bool full)
+        {
+            var sw = Stopwatch.StartNew();
+            int steps = 0;
+            int maxSteps = full ? 1000000 : 500;
+            bool bOk = compare && solverB != null;
+            do
+            {
+                double left = budget - sw.Elapsed.TotalMilliseconds;
+                int batch = (int)Math.Max(1, Math.Min(batchFx.Length, 0.8 * left / Math.Max(1e-4, msPerStep)));
+                batch = Math.Min(batch, maxSteps - steps);
+                double t0 = sw.Elapsed.TotalMilliseconds;
+                solver.StepMany(batch, batchFx, batchFy);
+                if (bOk) solverB.StepMany(batch, batchFxB, batchFyB);
+                msPerStep = 0.7 * msPerStep + 0.3 * (sw.Elapsed.TotalMilliseconds - t0) / batch;
+                AddForces(batch, bOk ? batch : 0);
+                steps += batch;
+            } while (sw.Elapsed.TotalMilliseconds < budget && steps < maxSteps);
+            stepMsAcc += sw.Elapsed.TotalMilliseconds;
+            stepsAcc += steps;
+            return steps;
+        }
+
+        double gpuBatchStart;
+
+        /// <summary>GPU: holt das im letzten Takt gestartete Paket ab (wartet nur, falls es noch läuft).</summary>
+        int FinishGpuBatch()
+        {
+            bool bOk = compare && solverB != null;
+            int steps = solver.EndSteps(batchFx, batchFy);
+            int stepsB = bOk ? solverB.EndSteps(batchFxB, batchFyB) : 0;
+            if (steps == 0) { AddForces(0, stepsB); return 0; }
+            double gpuMs = solver.LastGpuMs;
+            if (gpuMs >= 0 && stepsB > 0) gpuMs = solverB.LastGpuMs >= 0 ? gpuMs + solverB.LastGpuMs : -1;
+            // reine GPU-Zeit je Schritt (Zeitstempel der Grafikkarte); ohne Zeitstempel die Zeit vom Start bis fertig
+            double ms = gpuMs >= 0 ? gpuMs : clock.Elapsed.TotalMilliseconds - gpuBatchStart;
+            msPerStep = 0.7 * msPerStep + 0.3 * ms / steps;
+            stepMsAcc += ms;
+            stepsAcc += steps;
+            AddForces(steps, stepsB);
+            return steps;
+        }
+
+        /// <summary>GPU: startet das nächste Paket, so groß, dass die Grafikkarte etwa 'budget' ms daran rechnet.</summary>
+        void StartGpuBatch(double budget, bool full)
+        {
+            int cap = full ? Solver.MaxPending : 500;
+            int count = (int)Math.Max(1, Math.Min(cap, budget / Math.Max(1e-4, msPerStep)));
+            gpuBatchStart = clock.Elapsed.TotalMilliseconds;
+            solver.BeginSteps(count);
+            if (compare && solverB != null) solverB.BeginSteps(count);
+        }
+
+        void AddForces(int steps, int stepsB)
+        {
+            float q = 0.5f * solver.U0 * solver.U0 * refLen;
+            for (int k = 0; k < steps; k++) stats.Add((float)(batchFx[k] / q), (float)(batchFy[k] / q));
+            if (stepsB > 0)
+            {
+                float qB = 0.5f * solverB.U0 * solverB.U0 * refLenB;
+                for (int k = 0; k < stepsB; k++) statsB.Add((float)(batchFxB[k] / qB), (float)(batchFyB[k] / qB));
             }
         }
 
