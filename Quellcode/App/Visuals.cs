@@ -162,7 +162,6 @@ namespace Windkanal
     public sealed class Renderer
     {
         public Bitmap Bitmap;
-        int[] pix;
         int w, h;
         float[] field;
         float[] solidF;
@@ -235,7 +234,6 @@ namespace Windkanal
             if (Bitmap != null) Bitmap.Dispose();
             w = width; h = height;
             Bitmap = new Bitmap(w, h, PixelFormat.Format32bppRgb);
-            pix = new int[w * h];
         }
 
         /// <summary>Bildschirm -> Gitterkoordinaten (y nach oben).</summary>
@@ -246,10 +244,19 @@ namespace Windkanal
             return new PointF(gx, gy);
         }
 
-        public void Render(Solver s, Particles particles, ViewMode mode, bool smoke, float refLen)
+        // Körpermaske als Zahlen nur neu, wenn sich die Maske geändert hat
+        Solver solidOf;
+        int solidVersion;
+        // je Bildspalte: Gitterspalte (-1 = Hintergrund) und Gewicht, gilt für Breite/Maßstab/Versatz unten
+        int[] colX0;
+        float[] colFx;
+        int colW, colVnx;
+        float colScale = float.NaN, colOffX;
+
+        public unsafe void Render(Solver s, Particles particles, ViewMode mode, bool smoke, float refLen)
         {
             int nx = s.NX, ny = s.NY, n = s.N, vnx = s.VisibleNX;
-            if (field == null || field.Length != n) { field = new float[n]; solidF = new float[n]; }
+            if (field == null || field.Length != n) { field = new float[n]; solidF = new float[n]; solidOf = null; }
             Scale = Math.Min(w / (float)vnx, h / (float)ny);
             OffX = (w - vnx * Scale) / 2f;
             OffY = (h - ny * Scale) / 2f;
@@ -259,12 +266,18 @@ namespace Windkanal
             float q = 0.5f * u0 * u0;
             float vortScale = refLen / u0;
             float[] fld = field, sol = solidF;
+            if (solidOf != s || solidVersion != s.MaskVersion)
+            {
+                bool[] solid = s.Solid;
+                for (int c = 0; c < n; c++) sol[c] = solid[c] ? 1f : 0f;
+                solidOf = s; solidVersion = s.MaskVersion;
+            }
+            // Farbwerte nur für den sichtbaren Teil (die Bildpunkte lesen höchstens Spalte vnx - 1)
             Parallel.For(0, ny, y =>
             {
-                for (int x = 0; x < nx; x++)
+                for (int x = 0; x < vnx; x++)
                 {
                     int c = y * nx + x;
-                    sol[c] = s.Solid[c] ? 1f : 0f;
                     float t;
                     switch (mode)
                     {
@@ -302,11 +315,31 @@ namespace Windkanal
             bool fieldOn = mode != ViewMode.Rauch;
             int solR = fieldOn ? SolidR : SmokeSolidR, solG = fieldOn ? SolidG : SmokeSolidG, solB = fieldOn ? SolidB : SmokeSolidB;
             float scale = Scale, offX = OffX, offY = OffY;
-            int[] px = pix;
             int width = w;
+            if (colX0 == null || colW != w || colVnx != vnx || !colScale.Equals(scale) || !colOffX.Equals(offX))
+            {
+                // Spaltenlage hängt nur von Breite und Maßstab ab: einmal rechnen statt für jeden Bildpunkt
+                colX0 = new int[w]; colFx = new float[w];
+                for (int pxi = 0; pxi < w; pxi++)
+                {
+                    float gx = (pxi - offX + 0.5f) / scale - 0.5f;
+                    if (gx < -0.5f || gx > vnx - 0.5f) { colX0[pxi] = -1; continue; }
+                    if (gx < 0) gx = 0; if (gx > vnx - 1.001f) gx = vnx - 1.001f;
+                    int x0 = (int)gx;
+                    colX0[pxi] = x0; colFx[pxi] = gx - x0;
+                }
+                colW = w; colVnx = vnx; colScale = scale; colOffX = offX;
+            }
+            int[] cx0 = colX0;
+            float[] cfx = colFx;
+            // direkt in das Bild schreiben (32 bit je Punkt, Zeilen ohne Lücke)
+            var data = Bitmap.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb);
+            IntPtr scan0 = data.Scan0;
+            int stride = data.Stride / 4;
             Parallel.For(0, h, py =>
             {
-                int row = py * width;
+                int* px = (int*)scan0;
+                int row = py * stride;
                 float gy = ny - 1 - ((py - offY + 0.5f) / scale - 0.5f);
                 if (gy < -0.5f || gy > ny - 0.5f)
                 {
@@ -317,10 +350,9 @@ namespace Windkanal
                 int y0 = (int)gy; float fy = gy - y0;
                 for (int pxi = 0; pxi < width; pxi++)
                 {
-                    float gx = (pxi - offX + 0.5f) / scale - 0.5f;
-                    if (gx < -0.5f || gx > vnx - 0.5f) { px[row + pxi] = BgColor; continue; }
-                    if (gx < 0) gx = 0; if (gx > vnx - 1.001f) gx = vnx - 1.001f;
-                    int x0 = (int)gx; float fx = gx - x0;
+                    int x0 = cx0[pxi];
+                    if (x0 < 0) { px[row + pxi] = BgColor; continue; }
+                    float fx = cfx[pxi];
                     int c = y0 * nx + x0;
                     float w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
                     float sf = sol[c] * w00 + sol[c + 1] * w10 + sol[c + nx] * w01 + sol[c + nx + 1] * w11;
@@ -339,6 +371,7 @@ namespace Windkanal
 
             if (smoke && fieldOn && particles != null)
             {
+                int* px = (int*)scan0;
                 const float alpha = 0.45f;
                 int dot = scale >= 2.5f ? 2 : 1;
                 for (int i = 0; i < particles.Count; i++)
@@ -350,7 +383,7 @@ namespace Windkanal
                         {
                             int xx = sx + dx, yy = sy + dy;
                             if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-                            int idx = yy * w + xx;
+                            int idx = yy * stride + xx;
                             int col = px[idx];
                             int r = (col >> 16) & 255, g = (col >> 8) & 255, b = col & 255;
                             r = (int)(r + (255 - r) * alpha); g = (int)(g + (255 - g) * alpha); b = (int)(b + (250 - b) * alpha);
@@ -359,8 +392,6 @@ namespace Windkanal
                 }
             }
 
-            var data = Bitmap.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
-            Marshal.Copy(pix, 0, data.Scan0, pix.Length);
             Bitmap.UnlockBits(data);
         }
     }

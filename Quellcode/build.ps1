@@ -70,7 +70,7 @@ $modelRes += Get-ChildItem (Join-Path $root 'Modelle\Profile') -Filter *.dat | F
 # --- App ---
 $app = Join-Path $bin 'Windkanal2D.exe'
 & $csc /nologo /target:winexe /unsafe /optimize+ /platform:x64 /win32icon:$ico `
-    /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:$app `
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Numerics.dll /out:$app `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
     $modelRes (Join-Path $root 'App\*.cs') (Join-Path $root 'App3D\*.cs')
@@ -78,10 +78,17 @@ if ($LASTEXITCODE -ne 0) { throw 'App-Build fehlgeschlagen' }
 
 # --- Validierungstest (Konsole) ---
 $test = Join-Path $bin 'ValidationTest.exe'
-& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /out:$test $modelRes `
+& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /r:System.Numerics.dll /out:$test $modelRes `
     (Join-Path $root 'App\Solver.cs') (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') `
     (Join-Path $root 'App\Models.cs') (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'Test\ValidationTest.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Test-Build fehlgeschlagen' }
+
+# --- 2D-Leistungsmessung (Konsole: Rechnen, Zurücklesen, Rauch, Partikel, Zeichnen) ---
+$bench = Join-Path $bin 'Bench2D.exe'
+& $csc /nologo /unsafe /optimize+ /platform:x64 /r:System.Drawing.dll /r:System.Numerics.dll /out:$bench $modelRes `
+    (Join-Path $root 'App\Solver.cs') (Join-Path $root 'App\GpuLbm.cs') (Join-Path $root 'App\Shapes.cs') `
+    (Join-Path $root 'App\Models.cs') (Join-Path $root 'App\Visuals.cs') (Join-Path $root 'Test\Bench2D.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Bench-Build fehlgeschlagen' }
 
 # --- Modell-Vorschau (prüft alle Modelle und zeichnet eine Übersicht) ---
 $preview = Join-Path $bin 'ModellVorschau.exe'
@@ -98,7 +105,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Test3D-Build fehlgeschlagen' }
 # --- 3D-Vorschau (prüft Import und Zellen, speichert Bilder des 3D-Fensters) ---
 $preview3d = Join-Path $bin 'Vorschau3D.exe'
 & $csc /nologo /unsafe /optimize+ /platform:x64 /main:Vorschau3D `
-    /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:$preview3d `
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Numerics.dll /out:$preview3d `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
     $modelRes (Join-Path $root 'App\*.cs') (Join-Path $root 'App3D\*.cs') (Join-Path $root 'Test\Vorschau3D.cs')
@@ -108,7 +115,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Vorschau3D-Build fehlgeschlagen' }
 $setup = Join-Path $bin 'Setup.exe'
 # Der Installer nutzt Design, Schrift und Strömungsbühne des Programms (Theme, Bedienelemente, FlowStage)
 & $csc /nologo /target:winexe /unsafe /optimize+ /platform:x64 /win32icon:$ico `
-    /r:System.Windows.Forms.dll /r:System.Drawing.dll "/resource:$app,Payload.Windkanal2D.exe" /out:$setup `
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Numerics.dll "/resource:$app,Payload.Windkanal2D.exe" /out:$setup `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Regular.ttf'),Fonts.Outfit-Regular.ttf" `
     "/resource:$(Join-Path $root 'Fonts\Outfit-Medium.ttf'),Fonts.Outfit-Medium.ttf" `
     (Join-Path $root 'Setup\Setup.cs') (Join-Path $root 'App\AppInfo.cs') (Join-Path $root 'App\Ui.cs') `

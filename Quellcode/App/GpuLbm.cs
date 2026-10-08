@@ -12,8 +12,10 @@ namespace Windkanal
     /// </summary>
     sealed class GpuLbm : IDisposable
     {
-        /// <summary>Höchstzahl Schritte, deren Kräfte in einem Rutsch zurückgelesen werden.</summary>
+        /// <summary>Höchstzahl Schritte in einem Rutsch (so viele Kraft-Plätze je Randzelle liegen auf der GPU).</summary>
         public const int MaxBatch = 512;
+        /// <summary>Höchstzahl Schritte, deren Kräfte auf einmal zurückgelesen werden (mehrere Rutsche).</summary>
+        public const int MaxPending = 8 * MaxBatch;
 
         // ------------------------------------------------------------ gemeinsamer Kontext
 
@@ -37,7 +39,9 @@ namespace Windkanal
                 if (np == 0) throw new Exception("keine OpenCL-Plattform");
                 var plats = new IntPtr[np];
                 Check(CL.clGetPlatformIDs(np, plats, out np), "clGetPlatformIDs");
-                IntPtr best = IntPtr.Zero; ulong bestMem = 0;
+                // Eigenständige Grafikkarte vor eingebauter (Laptops mit zwei Grafikchips: der eingebaute meldet oft mehr
+                // Speicher, weil er sich den Arbeitsspeicher teilt, ist aber viel langsamer); danach der größte Speicher.
+                IntPtr best = IntPtr.Zero; ulong bestMem = 0; bool bestDiscrete = false;
                 foreach (var p in plats)
                 {
                     uint nd;
@@ -47,7 +51,10 @@ namespace Windkanal
                     foreach (var d in devs)
                     {
                         ulong mem = BitConverter.ToUInt64(Info(d, CL.DEVICE_GLOBAL_MEM_SIZE), 0);
-                        if (mem > bestMem) { bestMem = mem; best = d; }
+                        bool discrete = true;
+                        try { discrete = BitConverter.ToUInt32(Info(d, CL.DEVICE_HOST_UNIFIED_MEMORY), 0) == 0; } catch { }
+                        bool better = best == IntPtr.Zero || (discrete && !bestDiscrete) || (discrete == bestDiscrete && mem > bestMem);
+                        if (better) { bestMem = mem; best = d; bestDiscrete = discrete; }
                     }
                 }
                 if (best == IntPtr.Zero) throw new Exception("keine OpenCL-Grafikkarte gefunden");
@@ -57,7 +64,9 @@ namespace Windkanal
                 int err;
                 context = CL.clCreateContext(IntPtr.Zero, 1, new[] { device }, IntPtr.Zero, IntPtr.Zero, out err);
                 Check(err, "clCreateContext");
-                queue = CL.clCreateCommandQueue(context, device, 0, out err);
+                // mit Zeitstempeln: so misst das Programm, wie lange die GPU für ein Paket wirklich braucht
+                queue = CL.clCreateCommandQueue(context, device, CL.QUEUE_PROFILING_ENABLE, out err);
+                if (err != 0) queue = CL.clCreateCommandQueue(context, device, 0, out err);
                 Check(err, "clCreateCommandQueue");
             }
             catch (Exception e)
@@ -85,8 +94,8 @@ namespace Windkanal
 
         readonly int nx, ny, n, realSize;
         IntPtr program;
-        IntPtr kStep, kBound, kReduce, kReset, kSetEq, kKick, kSmokeTrace, kSmokeCorrect, kSmokeClear;
-        IntPtr bufA, bufB, bFlag, bSponge, bRho, bUx, bUy, bSlot, bCell, bForce, bList, bSmoke, bSmokeHat, bSmokeBar, bSmokeNew;
+        IntPtr kStep, kBound, kReduce, kReset, kSetEq, kKick, kSmokePrep, kSmokeTrace, kSmokeCorrect, kSmokeClear;
+        IntPtr bufA, bufB, bFlag, bSponge, bRho, bUx, bUy, bSlot, bCell, bForce, bList, bSmoke, bSmokeHat, bSmokeBar, bSmokeNew, bPosF, bPosB;
         int cellCap, listCap, slots;
         bool swapped;
         readonly double[] forceD;
@@ -118,8 +127,8 @@ namespace Windkanal
         {
             this.nx = nx; this.ny = ny; n = nx * ny;
             realSize = fp64 ? 8 : 4;
-            forceD = new double[2 * MaxBatch];
-            forceF = new float[2 * MaxBatch];
+            forceD = new double[2 * MaxPending];
+            forceF = new float[2 * MaxPending];
 
             int err;
             program = CL.clCreateProgramWithSource(context, 1, new[] { KernelSource }, IntPtr.Zero, out err);
@@ -140,6 +149,7 @@ namespace Windkanal
             kReset = Kernel("lbm_reset");
             kSetEq = Kernel("lbm_set_eq");
             kKick = Kernel("lbm_kick");
+            kSmokePrep = Kernel("smoke_prep");
             kSmokeTrace = Kernel("smoke_trace");
             kSmokeCorrect = Kernel("smoke_correct");
             kSmokeClear = Kernel("smoke_clear");
@@ -152,12 +162,18 @@ namespace Windkanal
             bUx = Buffer(n * 4L);
             bUy = Buffer(n * 4L);
             bSlot = Buffer(n * 4L);
-            bForce = Buffer(2L * MaxBatch * realSize);
+            bForce = Buffer(2L * MaxPending * realSize);
             bSmoke = Buffer(n * 4L);
             bSmokeHat = Buffer(n * 4L);
             bSmokeBar = Buffer(n * 4L);
             bSmokeNew = Buffer(n * 4L);
+            bPosF = Buffer(n * 8L);
+            bPosB = Buffer(n * 8L);
             Check(CL.clEnqueueWriteBuffer(queue, bSponge, 1, UIntPtr.Zero, (UIntPtr)(nx * 4L), sponge, 0, IntPtr.Zero, IntPtr.Zero), "Schreiben");
+
+            // Argumente, die sich nie ändern, nur einmal setzen (spart Aufrufe in den Treiber je Schritt)
+            Arg(kStep, 2, bFlag); Arg(kStep, 3, bSponge); Arg(kStep, 4, bRho); Arg(kStep, 5, bUx); Arg(kStep, 6, bUy); Arg(kStep, 7, bSlot);
+            Arg(kBound, 1, bRho); Arg(kBound, 2, bUx); Arg(kBound, 3, bUy);
         }
 
         IntPtr Kernel(string name)
@@ -214,6 +230,7 @@ namespace Windkanal
                 Release(ref bCell);
                 cellCap = (int)Math.Max(need, (long)MaxBatch * 256);
                 bCell = Buffer(cellCap * 2L * realSize);
+                Arg(kStep, 8, bCell);
             }
             if (changedCount > 0)
             {
@@ -238,34 +255,92 @@ namespace Windkanal
             Run(kKick, n, 128);
         }
 
-        /// <summary>Reiht einen Zeitschritt ein; 'k' ist die Nummer innerhalb des aktuellen Rutsches.</summary>
-        public void EnqueueStep(int k, float tau0, float spongeAmp, float smagK, float uIn, bool noSlip)
+        /// <summary>
+        /// Reiht einen Zeitschritt ein; 'k' ist die Nummer innerhalb des aktuellen Rutsches.
+        /// 'storeAll': Dichte und Geschwindigkeit überall speichern (sonst nur an den Spalten, die Ein-/Auslass brauchen).
+        /// </summary>
+        public void EnqueueStep(int k, float tau0, float spongeAmp, float smagK, float uIn, bool noSlip, bool storeAll,
+                                bool timeFirst = false, bool timeLast = false)
         {
             IntPtr src = Src, dst = Dst;
-            Arg(kStep, 0, src); Arg(kStep, 1, dst); Arg(kStep, 2, bFlag); Arg(kStep, 3, bSponge);
-            Arg(kStep, 4, bRho); Arg(kStep, 5, bUx); Arg(kStep, 6, bUy); Arg(kStep, 7, bSlot); Arg(kStep, 8, bCell);
-            Arg(kStep, 9, k * slots); Arg(kStep, 10, tau0); Arg(kStep, 11, spongeAmp); Arg(kStep, 12, smagK);
-            Arg(kStep, 13, uIn); Arg(kStep, 14, noSlip ? 1 : 0);
-            Run(kStep, n, 128);
+            Arg(kStep, 0, src); Arg(kStep, 1, dst);
+            Arg(kStep, 9, k * slots);
+            ArgCached(kStep, 10, tau0, ref aTau); ArgCached(kStep, 11, spongeAmp, ref aSponge); ArgCached(kStep, 12, smagK, ref aSmag);
+            ArgCached(kStep, 13, uIn, ref aUIn); Arg(kStep, 14, noSlip ? 1 : 0); Arg(kStep, 15, storeAll ? 1 : 0);
+            if (timeFirst) { ReleaseEvent(ref evFirst); evFirst = RunTimed(kStep, n, StepGroup); }
+            else Run(kStep, n, StepGroup);
 
-            Arg(kBound, 0, dst); Arg(kBound, 1, bRho); Arg(kBound, 2, bUx); Arg(kBound, 3, bUy); Arg(kBound, 4, uIn);
-            Run(kBound, ny, 64);
+            Arg(kBound, 0, dst); ArgCached(kBound, 4, uIn, ref aUInB);
+            if (timeLast) { ReleaseEvent(ref evLast); evLast = RunTimed(kBound, ny, 64); }
+            else Run(kBound, ny, 64);
             swapped = !swapped;
         }
 
-        /// <summary>Ein Teilschritt der Rauch-Mitführung (wie Solver.AdvectSmoke), mit der aktuellen Geschwindigkeit.</summary>
-        public void EnqueueSmoke(float dt, int streaks)
+        IntPtr evFirst, evLast;
+
+        /// <summary>
+        /// GPU-Zeit (ms) vom ersten bis zum letzten mit timeFirst/timeLast markierten Schritt; -1, wenn unbekannt.
+        /// Erst aufrufen, wenn die Schritte fertig sind (z. B. nach <see cref="ReadReducedForces"/>).
+        /// </summary>
+        public double TimedMs()
         {
-            Arg(kSmokeTrace, 0, bSmoke); Arg(kSmokeTrace, 1, bSmokeHat); Arg(kSmokeTrace, 2, bUx); Arg(kSmokeTrace, 3, bUy);
-            Arg(kSmokeTrace, 4, bFlag); Arg(kSmokeTrace, 5, dt);
-            Run(kSmokeTrace, n, 128);
-            Arg(kSmokeTrace, 0, bSmokeHat); Arg(kSmokeTrace, 1, bSmokeBar); Arg(kSmokeTrace, 5, -dt);
-            Run(kSmokeTrace, n, 128);
-            Arg(kSmokeCorrect, 0, bSmoke); Arg(kSmokeCorrect, 1, bSmokeHat); Arg(kSmokeCorrect, 2, bSmokeBar); Arg(kSmokeCorrect, 3, bSmokeNew);
-            Arg(kSmokeCorrect, 4, bUx); Arg(kSmokeCorrect, 5, bUy); Arg(kSmokeCorrect, 6, bFlag); Arg(kSmokeCorrect, 7, dt);
-            Arg(kSmokeCorrect, 8, streaks);
-            Run(kSmokeCorrect, n, 128);
-            IntPtr t = bSmoke; bSmoke = bSmokeNew; bSmokeNew = t;
+            double ms = -1;
+            ulong t0, t1;
+            UIntPtr r;
+            if (evFirst != IntPtr.Zero && evLast != IntPtr.Zero
+                && CL.clGetEventProfilingInfo(evFirst, CL.PROFILING_COMMAND_START, (UIntPtr)8, out t0, out r) == 0
+                && CL.clGetEventProfilingInfo(evLast, CL.PROFILING_COMMAND_END, (UIntPtr)8, out t1, out r) == 0
+                && t1 > t0)
+                ms = (t1 - t0) / 1e6;
+            ReleaseEvent(ref evFirst); ReleaseEvent(ref evLast);
+            return ms;
+        }
+
+        static void ReleaseEvent(ref IntPtr e)
+        {
+            if (e != IntPtr.Zero) CL.clReleaseEvent(e);
+            e = IntPtr.Zero;
+        }
+
+        IntPtr RunTimed(IntPtr k, long global, int local)
+        {
+            long g = (global + local - 1) / local * local;
+            IntPtr evt;
+            Check(CL.clEnqueueNDRangeKernelEvt(queue, k, 1, IntPtr.Zero, new[] { (UIntPtr)g }, new[] { (UIntPtr)local }, 0, IntPtr.Zero, out evt),
+                  "clEnqueueNDRangeKernel");
+            return evt;
+        }
+
+        /// <summary>Größe einer Arbeitsgruppe im Strömungsschritt (GTX 1660 Ti: 64 und 128 gleich schnell, 32 und 256 langsamer).</summary>
+        const int StepGroup = 128;
+
+        // zuletzt gesetzte Werte, damit unveränderte Argumente nicht jedes Mal neu übergeben werden
+        float aTau = float.NaN, aSponge = float.NaN, aSmag = float.NaN, aUIn = float.NaN, aUInB = float.NaN;
+
+        void ArgCached(IntPtr k, uint i, float v, ref float last)
+        {
+            if (v.Equals(last)) return;
+            Arg(k, i, v);
+            last = v;
+        }
+
+        /// <summary>'subs' Teilschritte der Rauch-Mitführung (wie Solver.AdvectSmoke), mit der aktuellen Geschwindigkeit.</summary>
+        public void EnqueueSmoke(float dt, int streaks, int subs)
+        {
+            Arg(kSmokePrep, 0, bUx); Arg(kSmokePrep, 1, bUy); Arg(kSmokePrep, 2, bFlag); Arg(kSmokePrep, 3, dt);
+            Arg(kSmokePrep, 4, bPosF); Arg(kSmokePrep, 5, bPosB);
+            Run(kSmokePrep, n, 128);
+            for (int k = 0; k < subs; k++)
+            {
+                Arg(kSmokeTrace, 0, bSmoke); Arg(kSmokeTrace, 1, bSmokeHat); Arg(kSmokeTrace, 2, bPosF); Arg(kSmokeTrace, 3, bFlag);
+                Run(kSmokeTrace, n, 128);
+                Arg(kSmokeTrace, 0, bSmokeHat); Arg(kSmokeTrace, 1, bSmokeBar); Arg(kSmokeTrace, 2, bPosB);
+                Run(kSmokeTrace, n, 128);
+                Arg(kSmokeCorrect, 0, bSmoke); Arg(kSmokeCorrect, 1, bSmokeHat); Arg(kSmokeCorrect, 2, bSmokeBar); Arg(kSmokeCorrect, 3, bSmokeNew);
+                Arg(kSmokeCorrect, 4, bPosF); Arg(kSmokeCorrect, 5, bFlag); Arg(kSmokeCorrect, 6, streaks);
+                Run(kSmokeCorrect, n, 128);
+                IntPtr t = bSmoke; bSmoke = bSmokeNew; bSmokeNew = t;
+            }
         }
 
         public void ReadSmoke(float[] smoke)
@@ -273,28 +348,34 @@ namespace Windkanal
             Check(CL.clEnqueueReadBuffer(queue, bSmoke, 1, UIntPtr.Zero, (UIntPtr)(n * 4L), smoke, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
         }
 
-        /// <summary>Summiert die Kräfte der letzten 'steps' Schritte und liest sie zurück.</summary>
-        public void ReadForces(int steps, double[] fx, double[] fy, int offset)
+        /// <summary>
+        /// Summiert die Kräfte der zuletzt eingereihten 'steps' Schritte (ein Rutsch, höchstens <see cref="MaxBatch"/>)
+        /// auf der GPU und legt sie ab Platz 'offset' ab. Muss vor dem nächsten Rutsch eingereiht werden.
+        /// </summary>
+        public void EnqueueReduce(int steps, int offset)
         {
-            if (slots == 0)
-            {
-                for (int k = 0; k < steps; k++) { fx[offset + k] = 0; fy[offset + k] = 0; }
-                return;
-            }
-            Arg(kReduce, 0, bCell); Arg(kReduce, 1, slots); Arg(kReduce, 2, bForce);
-            Run(kReduce, steps * 256L, 256);
+            Arg(kReduce, 0, bCell); Arg(kReduce, 1, slots); Arg(kReduce, 2, bForce); Arg(kReduce, 3, offset);
+            Run(kReduce, steps * 256L, 256);   // ohne Körper (slots = 0) ergibt das genau 0
+        }
+
+        /// <summary>Wartet auf die eingereihten Schritte und liest die Kräfte der ersten 'steps' Plätze.</summary>
+        public void ReadReducedForces(int steps, double[] fx, double[] fy)
+        {
             UIntPtr bytes = (UIntPtr)(2L * steps * realSize);
             if (fp64)
             {
                 Check(CL.clEnqueueReadBuffer(queue, bForce, 1, UIntPtr.Zero, bytes, forceD, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
-                for (int k = 0; k < steps; k++) { fx[offset + k] = forceD[2 * k]; fy[offset + k] = forceD[2 * k + 1]; }
+                for (int k = 0; k < steps; k++) { fx[k] = forceD[2 * k]; fy[k] = forceD[2 * k + 1]; }
             }
             else
             {
                 Check(CL.clEnqueueReadBuffer(queue, bForce, 1, UIntPtr.Zero, bytes, forceF, 0, IntPtr.Zero, IntPtr.Zero), "Lesen");
-                for (int k = 0; k < steps; k++) { fx[offset + k] = forceF[2 * k]; fy[offset + k] = forceF[2 * k + 1]; }
+                for (int k = 0; k < steps; k++) { fx[k] = forceF[2 * k]; fy[k] = forceF[2 * k + 1]; }
             }
         }
+
+        /// <summary>Schickt die eingereihten Befehle sofort los (die GPU rechnet, während das Programm weiterläuft).</summary>
+        public void Flush() { Check(CL.clFlush(queue), "clFlush"); }
 
         /// <summary>Kopiert Dichte und Geschwindigkeit für Anzeige und Auswertung in den Hauptspeicher.</summary>
         public void ReadMacros(float[] rho, float[] ux, float[] uy)
@@ -308,12 +389,13 @@ namespace Windkanal
         public void Dispose()
         {
             if (queue != IntPtr.Zero) CL.clFinish(queue);
+            ReleaseEvent(ref evFirst); ReleaseEvent(ref evLast);
             Release(ref bufA); Release(ref bufB); Release(ref bFlag); Release(ref bSponge); Release(ref bRho);
             Release(ref bUx); Release(ref bUy); Release(ref bSlot); Release(ref bCell); Release(ref bForce); Release(ref bList);
-            Release(ref bSmoke); Release(ref bSmokeHat); Release(ref bSmokeBar); Release(ref bSmokeNew);
-            foreach (var k in new[] { kStep, kBound, kReduce, kReset, kSetEq, kKick, kSmokeTrace, kSmokeCorrect, kSmokeClear })
+            Release(ref bSmoke); Release(ref bSmokeHat); Release(ref bSmokeBar); Release(ref bSmokeNew); Release(ref bPosF); Release(ref bPosB);
+            foreach (var k in new[] { kStep, kBound, kReduce, kReset, kSetEq, kKick, kSmokePrep, kSmokeTrace, kSmokeCorrect, kSmokeClear })
                 if (k != IntPtr.Zero) CL.clReleaseKernel(k);
-            kStep = kBound = kReduce = kReset = kSetEq = kKick = kSmokeTrace = kSmokeCorrect = kSmokeClear = IntPtr.Zero;
+            kStep = kBound = kReduce = kReset = kSetEq = kKick = kSmokePrep = kSmokeTrace = kSmokeCorrect = kSmokeClear = IntPtr.Zero;
             if (program != IntPtr.Zero) CL.clReleaseProgram(program);
             program = IntPtr.Zero;
         }
@@ -344,7 +426,7 @@ __constant float W[9] = { 4.0f / 9, 1.0f / 9, 1.0f / 9, 1.0f / 9, 1.0f / 9, 1.0f
 __kernel void lbm_step(__global const float* src, __global float* dst, __global const uchar* flag,
                        __global const float* sp, __global float* rhoA, __global float* uxA, __global float* uyA,
                        __global const int* fslot, __global real2* fcell, int slotBase,
-                       float tau0, float spongeAmp, float smagK, float uIn, int noSlip)
+                       float tau0, float spongeAmp, float smagK, float uIn, int noSlip, int storeAll)
 {
     int c = get_global_id(0);
     if (c >= N) return;
@@ -414,7 +496,9 @@ __kernel void lbm_step(__global const float* src, __global float* dst, __global 
         ux += damp * (uIn - ux);
         uy -= damp * uy;
     }
-    rhoA[c] = rho; uxA[c] = ux; uyA[c] = uy;
+    // Dichte/Geschwindigkeit braucht nur der Rand (Einlass liest x = 1, Auslass x = NX-2) in jedem Schritt,
+    // alles andere erst am Ende eines Pakets (Anzeige, Rauch, Störimpuls) - spart Speicherverkehr
+    if (storeAll || x == 1 || x == NX - 2) { rhoA[c] = rho; uxA[c] = ux; uyA[c] = uy; }
 
     float usq = 1.5f * (ux * ux + uy * uy);
     float r1 = rho * (1.0f / 9.0f), r2 = rho * (1.0f / 36.0f);
@@ -493,8 +577,9 @@ __kernel void lbm_inlet_outlet(__global float* dst, __global float* rhoA, __glob
     }
 }
 
-__kernel void lbm_reduce_forces(__global const real2* fcell, int slots, __global real* out)
+__kernel void lbm_reduce_forces(__global const real2* fcell, int slots, __global real* out, int offset)
 {
+    out += 2 * offset;
     __local real sx[256];
     __local real sy[256];
     int k = get_group_id(0), lid = get_local_id(0);
@@ -568,18 +653,29 @@ float2 back_trace(int x, int y, float dt, __global const float* ux, __global con
     return (float2)((float)x - dt * bilin(ux, mx, my), (float)y - dt * bilin(uy, mx, my));
 }
 
-__kernel void smoke_trace(__global const float* src, __global float* dst, __global const float* ux, __global const float* uy,
-                          __global const uchar* flag, float dt)
+// Die Strömung ändert sich während der Teilschritte eines Bildes nicht: Ausgangspunkte (+dt und -dt) einmal rechnen
+__kernel void smoke_prep(__global const float* ux, __global const float* uy, __global const uchar* flag, float dt,
+                         __global float2* posF, __global float2* posB)
+{
+    int c = get_global_id(0);
+    if (c >= N) return;
+    if (flag[c] == SOLID) return;
+    int x = c % NX, y = c / NX;
+    posF[c] = back_trace(x, y, dt, ux, uy);
+    posB[c] = back_trace(x, y, -dt, ux, uy);
+}
+
+__kernel void smoke_trace(__global const float* src, __global float* dst, __global const float2* pos, __global const uchar* flag)
 {
     int c = get_global_id(0);
     if (c >= N) return;
     if (flag[c] == SOLID) { dst[c] = 0.0f; return; }
-    float2 b = back_trace(c % NX, c / NX, dt, ux, uy);
+    float2 b = pos[c];
     dst[c] = bilin(src, b.x, b.y);
 }
 
 __kernel void smoke_correct(__global const float* phi, __global const float* hat, __global const float* bar, __global float* dst,
-                            __global const float* ux, __global const float* uy, __global const uchar* flag, float dt, int streaks)
+                            __global const float2* posF, __global const uchar* flag, int streaks)
 {
     int c = get_global_id(0);
     if (c >= N) return;
@@ -593,7 +689,7 @@ __kernel void smoke_correct(__global const float* phi, __global const float* hat
         dst[c] = clamp(1.6f - d / 1.1f, 0.0f, 1.0f);
         return;
     }
-    float2 b = back_trace(x, y, dt, ux, uy);
+    float2 b = posF[c];
     float bx = clamp(b.x, 0.0f, (float)NX - 1.001f), by = clamp(b.y, 0.0f, (float)NY - 1.001f);
     int k = (int)by * NX + (int)bx;
     float lo = fmin(fmin(phi[k], phi[k + 1]), fmin(phi[k + NX], phi[k + NX + 1]));
@@ -619,8 +715,12 @@ __kernel void smoke_clear(__global float* a)
         public const uint DEVICE_GLOBAL_MEM_SIZE = 0x101F;
         public const uint DEVICE_NAME = 0x102B;
         public const uint DEVICE_EXTENSIONS = 0x1030;
+        public const uint DEVICE_HOST_UNIFIED_MEMORY = 0x1035;
         public const uint PROGRAM_BUILD_LOG = 0x1183;
         public const ulong MEM_READ_WRITE = 1;
+        public const ulong QUEUE_PROFILING_ENABLE = 1 << 1;
+        public const uint PROFILING_COMMAND_START = 0x1282;
+        public const uint PROFILING_COMMAND_END = 0x1283;
 
         [DllImport(Lib)] public static extern int clGetPlatformIDs(uint num, [Out] IntPtr[] platforms, out uint count);
         [DllImport(Lib)] public static extern int clGetDeviceIDs(IntPtr platform, ulong type, uint num, [Out] IntPtr[] devices, out uint count);
@@ -641,7 +741,12 @@ __kernel void smoke_clear(__global float* a)
         [DllImport(Lib)] public static extern int clEnqueueWriteBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [In] int[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueReadBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [Out] float[] data, uint numEvents, IntPtr events, IntPtr evt);
         [DllImport(Lib)] public static extern int clEnqueueReadBuffer(IntPtr queue, IntPtr buffer, uint blocking, UIntPtr offset, UIntPtr size, [Out] double[] data, uint numEvents, IntPtr events, IntPtr evt);
+        [DllImport(Lib, EntryPoint = "clEnqueueNDRangeKernel")]
+        public static extern int clEnqueueNDRangeKernelEvt(IntPtr queue, IntPtr kernel, uint dim, IntPtr offset, UIntPtr[] global, UIntPtr[] local, uint numEvents, IntPtr events, out IntPtr evt);
+        [DllImport(Lib)] public static extern int clGetEventProfilingInfo(IntPtr evt, uint param, UIntPtr size, out ulong value, out UIntPtr sizeRet);
+        [DllImport(Lib)] public static extern int clReleaseEvent(IntPtr evt);
         [DllImport(Lib)] public static extern int clFinish(IntPtr queue);
+        [DllImport(Lib)] public static extern int clFlush(IntPtr queue);
         [DllImport(Lib)] public static extern int clReleaseMemObject(IntPtr mem);
         [DllImport(Lib)] public static extern int clReleaseKernel(IntPtr kernel);
         [DllImport(Lib)] public static extern int clReleaseProgram(IntPtr program);

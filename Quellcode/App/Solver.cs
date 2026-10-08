@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using System.Threading.Tasks;
 
 namespace Windkanal
@@ -30,6 +31,8 @@ namespace Windkanal
         public readonly bool[] Solid;
         public readonly float[] Rho, Ux, Uy;
         readonly float[] sponge;
+        /// <summary>Erste Spalte mit Dämpfung (sponge &gt; 0); davor rechnet die CPU mit SIMD.</summary>
+        readonly int spongeFrom;
         readonly double[] rowFx, rowFy;
 
         /// <summary>Anströmgeschwindigkeit in Gittereinheiten.</summary>
@@ -49,6 +52,8 @@ namespace Windkanal
         /// </summary>
         public readonly float[] Smoke;
         float[] smokeHat, smokeBar, smokeNew;
+        int[] traceIdxF, traceIdxB;
+        float[] traceWxF, traceWyF, traceWxB, traceWyB;
         bool smokeStale;
 
         GpuLbm gpu;
@@ -78,6 +83,8 @@ namespace Windkanal
                 float s = (x - start) / (float)(nx - 1 - start);
                 sponge[x] = s * s;
             }
+            spongeFrom = nx;
+            for (int x = 0; x < nx; x++) if (sponge[x] > 0f) { spongeFrom = x; break; }
             string reason;
             if (Environment.GetEnvironmentVariable("WK_CPU") == "1") reason = "per WK_CPU=1 abgeschaltet";
             else gpu = GpuLbm.TryCreate(nx, ny, sponge, out reason);
@@ -92,6 +99,9 @@ namespace Windkanal
                 smokeHat = new float[N];
                 smokeBar = new float[N];
                 smokeNew = new float[N];
+                traceIdxF = new int[N]; traceIdxB = new int[N];
+                traceWxF = new float[N]; traceWyF = new float[N];
+                traceWxB = new float[N]; traceWyB = new float[N];
             }
             RebuildFlags();
             Reset();
@@ -132,6 +142,7 @@ namespace Windkanal
 
         public void Reset()
         {
+            pending = 0;   // ein laufendes Paket gehört zur alten Strömung: Ergebnisse verwerfen (GPU setzt danach zurück)
             Steps = 0; Fx = 0; Fy = 0;
             // Start aus der Ruhe – die Anströmung fährt wie beim echten Gebläse sanft hoch.
             for (int c = 0; c < N; c++)
@@ -209,8 +220,12 @@ namespace Windkanal
             RebuildFlags(changed, nChanged);
         }
 
+        /// <summary>Zählt jede Änderung der Hindernismaske (damit die Anzeige Abgeleitetes nur bei Bedarf neu rechnet).</summary>
+        public int MaskVersion { get; private set; }
+
         void RebuildFlags(int[] changed = null, int nChanged = 0)
         {
+            MaskVersion++;
             RebuildFlagsCpu();
             if (gpu == null) return;
             // Kraft-Slots: jede Randzelle mit Verbindung zum Körper bekommt einen Platz,
@@ -266,11 +281,13 @@ namespace Windkanal
         /// </summary>
         public void StepMany(int count, double[] fx, double[] fy)
         {
+            if (pending > 0) EndSteps(null, null);
             if (gpu == null)
             {
                 for (int k = 0; k < count; k++)
                 {
-                    StepCpu();
+                    // wie auf der GPU: volle Felder nur am Ende des Pakets oder vor dem Störimpuls
+                    StepCpu(k == count - 1 || Steps + 1 == RampSteps);
                     if (fx != null) { fx[k] = Fx; fy[k] = Fy; }
                 }
                 return;
@@ -285,10 +302,13 @@ namespace Windkanal
                     float uIn = InletVelocity;
                     float tau0 = Tau;
                     float spongeAmp = Math.Max(0f, 1.0f - tau0);
-                    gpu.EnqueueStep(k, tau0, spongeAmp, smagK, uIn, NoSlipWalls);
+                    // volle Felder nur, wenn sie danach jemand liest: Ende des Pakets oder Störimpuls im nächsten Schritt
+                    bool storeAll = k == m - 1 || Steps + 1 == RampSteps;
+                    gpu.EnqueueStep(k, tau0, spongeAmp, smagK, uIn, NoSlipWalls, storeAll);
                     Steps++;
                 }
-                gpu.ReadForces(m, batchFx, batchFy, 0);
+                gpu.EnqueueReduce(m, 0);
+                gpu.ReadReducedForces(m, batchFx, batchFy);
                 if (fx != null)
                 {
                     Array.Copy(batchFx, 0, fx, done, m);
@@ -300,7 +320,85 @@ namespace Windkanal
             gpu.ReadMacros(Rho, Ux, Uy);
         }
 
-        void StepCpu()
+        // ------------------------------------------------------------ Rechnen ohne Warten (GPU)
+
+        /// <summary>Höchstzahl Schritte in einem Paket von <see cref="BeginSteps"/>.</summary>
+        public const int MaxPending = GpuLbm.MaxPending;
+        int pending;
+
+        /// <summary>Anzahl Schritte, die gerade auf der Grafikkarte laufen (0 = keine).</summary>
+        public int Pending { get { return pending; } }
+
+        /// <summary>Reine GPU-Rechenzeit (ms) des zuletzt mit <see cref="EndSteps"/> abgeholten Pakets, -1 wenn unbekannt.</summary>
+        public double LastGpuMs = -1;
+
+        /// <summary>
+        /// Startet 'count' Schritte (höchstens <see cref="MaxPending"/>). Auf der GPU kehrt der Aufruf sofort zurück,
+        /// die Grafikkarte rechnet, während das Programm z. B. das Bild zeichnet. Auf der CPU wird gleich gerechnet.
+        /// Rho/Ux/Uy und die Kräfte sind erst nach <see cref="EndSteps"/> aktuell; Rechnung und Ergebnisse sind
+        /// dieselben wie mit <see cref="StepMany"/>.
+        /// </summary>
+        public void BeginSteps(int count)
+        {
+            if (pending > 0) EndSteps(null, null);
+            count = Math.Max(1, Math.Min(MaxPending, count));
+            if (gpu == null)
+            {
+                if (pendingFx == null) { pendingFx = new double[MaxPending]; pendingFy = new double[MaxPending]; }
+                StepMany(count, pendingFx, pendingFy);
+                pending = count;
+                return;
+            }
+            float smagK = 18f * 1.41421356f * SmagorinskyCs * SmagorinskyCs;
+            for (int done = 0; done < count; )
+            {
+                int m = Math.Min(count - done, GpuLbm.MaxBatch);
+                for (int k = 0; k < m; k++)
+                {
+                    if (Steps == RampSteps) Kick();
+                    float uIn = InletVelocity;
+                    float tau0 = Tau;
+                    float spongeAmp = Math.Max(0f, 1.0f - tau0);
+                    bool last = done + k == count - 1;
+                    bool storeAll = last || Steps + 1 == RampSteps;
+                    gpu.EnqueueStep(k, tau0, spongeAmp, smagK, uIn, NoSlipWalls, storeAll, done + k == 0, last);
+                    Steps++;
+                    // früh losschicken: die GPU fängt an, während hier noch weitere Schritte eingereiht werden
+                    if ((done + k) % 16 == 0) gpu.Flush();
+                }
+                gpu.EnqueueReduce(m, done);   // Kräfte dieses Teilpakets zusammenfassen, bevor das nächste sie überschreibt
+                done += m;
+            }
+            gpu.Flush();
+            pending = count;
+        }
+
+        double[] pendingFx, pendingFy;
+
+        /// <summary>
+        /// Wartet auf das mit <see cref="BeginSteps"/> gestartete Paket, holt Kräfte (je Schritt nach fx/fy, dürfen null sein)
+        /// und Rho/Ux/Uy. Gibt die Zahl der Schritte zurück (0, wenn nichts lief oder die Strömung inzwischen neu gestartet wurde).
+        /// </summary>
+        public int EndSteps(double[] fx, double[] fy)
+        {
+            int count = pending;
+            if (count == 0) return 0;
+            pending = 0;
+            if (gpu == null)
+            {
+                if (fx != null) { Array.Copy(pendingFx, fx, count); Array.Copy(pendingFy, fy, count); }
+                return count;
+            }
+            if (pendingFx == null) { pendingFx = new double[MaxPending]; pendingFy = new double[MaxPending]; }
+            gpu.ReadReducedForces(count, pendingFx, pendingFy);
+            LastGpuMs = gpu.TimedMs();
+            gpu.ReadMacros(Rho, Ux, Uy);
+            Fx = pendingFx[count - 1]; Fy = pendingFy[count - 1];
+            if (fx != null) { Array.Copy(pendingFx, fx, count); Array.Copy(pendingFy, fy, count); }
+            return count;
+        }
+
+        void StepCpu(bool storeAll = true)
         {
             if (Steps == RampSteps) Kick();
             float uIn = InletVelocity;
@@ -309,7 +407,7 @@ namespace Windkanal
             float smagK = 18f * 1.41421356f * SmagorinskyCs * SmagorinskyCs;
             float[] src = fSrc, dst = fDst;
 
-            Parallel.For(0, NY, y => StepRow(y, src, dst, tau0, spongeAmp, smagK, uIn));
+            Parallel.For(0, NY, y => StepRow(y, src, dst, tau0, spongeAmp, smagK, uIn, storeAll));
 
             // Einlass (x = 0): Gleichgewicht mit vorgegebener Geschwindigkeit,
             // Dichte aus dem Nachbarn extrapoliert (lässt Druckwellen hinaus).
@@ -351,12 +449,15 @@ namespace Windkanal
             Steps++;
         }
 
-        unsafe void StepRow(int y, float[] srcArr, float[] dstArr, float tau0, float spongeAmp, float smagK, float uIn)
+        unsafe void StepRow(int y, float[] srcArr, float[] dstArr, float tau0, float spongeAmp, float smagK, float uIn, bool storeAll)
         {
             int n = N, nx = NX, ny = NY;
             bool noSlip = NoSlipWalls;
             double fxs = 0, fys = 0;
             float* f = stackalloc float[9];
+            // außerhalb der Beruhigungsstrecke ist sp = 0, also tau = tau0 + spongeAmp * 0 (genau wie unten gerechnet)
+            float tauFree = tau0 + spongeAmp * 0f;
+            int spFrom = spongeFrom;
             fixed (float* src = srcArr, dst = dstArr, rhoA = Rho, uxA = Ux, uyA = Uy, sp = sponge)
             fixed (byte* flag = Flags)
             {
@@ -364,6 +465,15 @@ namespace Windkanal
                 for (int x = 1; x < nx - 1; x++)
                 {
                     int c = rowBase + x;
+                    // Vier freie Strömungszellen nebeneinander: mit SIMD in einem Rutsch (gleiche Formeln, gleiche Reihenfolge).
+                    // Die Gruppe liegt ganz vor oder ganz in der Beruhigungsstrecke, sonst einzeln.
+                    if (x + 4 <= nx - 1 && *(uint*)(flag + c) == 0 && (x + 4 <= spFrom || x >= spFrom)
+                        && FluidBlock4(src, dst, rhoA, uxA, uyA, x >= spFrom ? sp + x : null, c, n, nx, tauFree, tau0, spongeAmp, smagK, uIn,
+                                       storeAll || x == 1 || x + 3 >= nx - 2))
+                    {
+                        x += 3;
+                        continue;
+                    }
                     byte fl = flag[c];
                     if (fl == SOLID) continue;
 
@@ -429,7 +539,7 @@ namespace Windkanal
                         ux += damp * (uIn - ux);
                         uy -= damp * uy;
                     }
-                    rhoA[c] = rho; uxA[c] = ux; uyA[c] = uy;
+                    if (storeAll || x == 1 || x == nx - 2) { rhoA[c] = rho; uxA[c] = ux; uyA[c] = uy; }
 
                     // --- Gleichgewicht ---
                     float usq = 1.5f * (ux * ux + uy * uy);
@@ -479,6 +589,88 @@ namespace Windkanal
             rowFx[y] = fxs; rowFy[y] = fys;
         }
 
+        /// <summary>
+        /// Vier freie Strömungszellen (c .. c+3) mit SIMD: exakt dieselben Rechenschritte in derselben Reihenfolge
+        /// wie die Einzelzelle in <see cref="StepRow"/>, daher bitgleiche Ergebnisse.
+        /// 'sp' zeigt auf die Dämpfung der vier Zellen (alle &gt; 0) oder ist null (keine Dämpfung, tau = tauFree).
+        /// Gibt false zurück (ohne etwas zu schreiben), wenn eine Zelle das Geschwindigkeits-Sicherheitsnetz braucht.
+        /// </summary>
+        static unsafe bool FluidBlock4(float* src, float* dst, float* rhoA, float* uxA, float* uyA, float* sp, int c, int n, int nx,
+                                       float tauFree, float tau0, float spongeAmp, float smagK, float uIn, bool store)
+        {
+            Vector4 f0 = *(Vector4*)(src + c);
+            Vector4 f1 = *(Vector4*)(src + n + c - 1);
+            Vector4 f2 = *(Vector4*)(src + 2 * n + c - nx);
+            Vector4 f3 = *(Vector4*)(src + 3 * n + c + 1);
+            Vector4 f4 = *(Vector4*)(src + 4 * n + c + nx);
+            Vector4 f5 = *(Vector4*)(src + 5 * n + c - nx - 1);
+            Vector4 f6 = *(Vector4*)(src + 6 * n + c - nx + 1);
+            Vector4 f7 = *(Vector4*)(src + 7 * n + c + nx + 1);
+            Vector4 f8 = *(Vector4*)(src + 8 * n + c + nx - 1);
+
+            Vector4 one = Vector4.One;
+            Vector4 rho = f0 + f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8;
+            Vector4 inv = one / rho;
+            Vector4 ux = (f1 - f3 + f5 - f6 - f7 + f8) * inv;
+            Vector4 uy = (f2 - f4 + f5 + f6 - f7 - f8) * inv;
+            Vector4 u2 = ux * ux + uy * uy;
+            if (u2.X > 0.0625f || u2.Y > 0.0625f || u2.Z > 0.0625f || u2.W > 0.0625f) return false;
+            Vector4 tauV;
+            if (sp != null)
+            {
+                // Beruhigungsstrecke (wie in StepRow)
+                Vector4 spx = *(Vector4*)sp;
+                Vector4 damp = 0.06f * spx;
+                ux += damp * (new Vector4(uIn) - ux);
+                uy -= damp * uy;
+                tauV = new Vector4(tau0) + spongeAmp * spx;
+            }
+            else tauV = new Vector4(tauFree);
+            if (store)
+            {
+                *(Vector4*)(rhoA + c) = rho; *(Vector4*)(uxA + c) = ux; *(Vector4*)(uyA + c) = uy;
+            }
+
+            Vector4 usq = 1.5f * (ux * ux + uy * uy);
+            Vector4 r1 = rho * (1f / 9f), r2 = rho * (1f / 36f);
+            Vector4 e0 = rho * (4f / 9f) * (one - usq);
+            Vector4 e1 = r1 * (one + 3f * ux + 4.5f * ux * ux - usq);
+            Vector4 e3 = r1 * (one - 3f * ux + 4.5f * ux * ux - usq);
+            Vector4 e2 = r1 * (one + 3f * uy + 4.5f * uy * uy - usq);
+            Vector4 e4 = r1 * (one - 3f * uy + 4.5f * uy * uy - usq);
+            Vector4 a = ux + uy, b = uy - ux;
+            Vector4 e5 = r2 * (one + 3f * a + 4.5f * a * a - usq);
+            Vector4 e7 = r2 * (one - 3f * a + 4.5f * a * a - usq);
+            Vector4 e6 = r2 * (one + 3f * b + 4.5f * b * b - usq);
+            Vector4 e8 = r2 * (one - 3f * b + 4.5f * b * b - usq);
+
+            Vector4 pxx = (f1 - e1) + (f3 - e3) + (f5 - e5) + (f6 - e6) + (f7 - e7) + (f8 - e8);
+            Vector4 pyy = (f2 - e2) + (f4 - e4) + (f5 - e5) + (f6 - e6) + (f7 - e7) + (f8 - e8);
+            Vector4 pxy = (f5 - e5) - (f6 - e6) + (f7 - e7) - (f8 - e8);
+
+            Vector4 q = Vector4.SquareRoot(pxx * pxx + pyy * pyy + 2f * pxy * pxy);
+            Vector4 tauE = 0.5f * (tauV + Vector4.SquareRoot(tauV * tauV + smagK * q * inv));
+            Vector4 k = one - one / tauE;
+
+            Vector4 tr = (pxx + pyy) * (1f / 3f);
+            Vector4 n0 = -2f * tr;
+            Vector4 nx1 = 0.5f * (pxx - tr);
+            Vector4 ny1 = 0.5f * (pyy - tr);
+            Vector4 nd = 0.125f * (2f * tr);
+            Vector4 nxy = 0.125f * 2f * pxy;
+
+            *(Vector4*)(dst + c) = e0 + k * n0;
+            *(Vector4*)(dst + n + c) = e1 + k * nx1;
+            *(Vector4*)(dst + 2 * n + c) = e2 + k * ny1;
+            *(Vector4*)(dst + 3 * n + c) = e3 + k * nx1;
+            *(Vector4*)(dst + 4 * n + c) = e4 + k * ny1;
+            *(Vector4*)(dst + 5 * n + c) = e5 + k * (nd + nxy);
+            *(Vector4*)(dst + 6 * n + c) = e6 + k * (nd - nxy);
+            *(Vector4*)(dst + 7 * n + c) = e7 + k * (nd + nxy);
+            *(Vector4*)(dst + 8 * n + c) = e8 + k * (nd - nxy);
+            return true;
+        }
+
         // ------------------------------------------------------------ Rauch
 
         /// <summary>Anzahl der Rauchfäden am Einlass.</summary>
@@ -499,18 +691,23 @@ namespace Windkanal
             int streaks = SmokeStreaks;
             if (gpu != null)
             {
-                for (int k = 0; k < subs; k++) gpu.EnqueueSmoke(dt, streaks);
+                gpu.EnqueueSmoke(dt, streaks, subs);
                 smokeStale = true;
                 return;
             }
+            // Die Strömung steht während aller Teilschritte still: Rückverfolgung (vorwärts und rückwärts)
+            // nur einmal rechnen statt dreimal pro Teilschritt - gleiche Formeln, also gleiche Zahlen
+            Parallel.For(0, NY, y => SmokePrepare(y, dt));
+            float[] phi = Smoke, nw = smokeNew;
             for (int k = 0; k < subs; k++)
             {
-                float[] phi = Smoke, hat = smokeHat, bar = smokeBar, nw = smokeNew;
-                Parallel.For(0, NY, y => SmokeTrace(y, phi, hat, dt));
-                Parallel.For(0, NY, y => SmokeTrace(y, hat, bar, -dt));
-                Parallel.For(0, NY, y => SmokeCorrect(y, phi, hat, bar, nw, dt, streaks));
-                Array.Copy(nw, Smoke, N);
+                float[] p = phi, n = nw, hat = smokeHat, bar = smokeBar;
+                Parallel.For(0, NY, y => SmokeTrace(y, p, hat, traceIdxF, traceWxF, traceWyF));
+                Parallel.For(0, NY, y => SmokeTrace(y, hat, bar, traceIdxB, traceWxB, traceWyB));
+                Parallel.For(0, NY, y => SmokeCorrect(y, p, hat, bar, n, streaks));
+                phi = n; nw = p;   // Puffer tauschen statt kopieren
             }
+            if (phi != Smoke) Array.Copy(phi, Smoke, N);
         }
 
         /// <summary>Holt die Rauchdichte von der Grafikkarte (auf der CPU ohne Wirkung).</summary>
@@ -549,35 +746,75 @@ namespace Windkanal
             by = y - dt * Bilinear(Uy, mx, my, NX, NY);
         }
 
-        void SmokeTrace(int y, float[] src, float[] dst, float dt)
+        /// <summary>
+        /// Ausgangspunkte der Rückverfolgung um +dt und -dt für eine Zeile, gleich als Gitterzelle und Gewichte
+        /// (wie in <see cref="Bilinear"/> begrenzt und zerlegt), damit die Teilschritte nur noch nachschlagen.
+        /// </summary>
+        unsafe void SmokePrepare(int y, float dt)
         {
-            for (int x = 0; x < NX; x++)
+            int nx = NX;
+            float xMax = nx - 1.001f, yMax = NY - 1.001f;
+            fixed (bool* solid = Solid)
+            fixed (int* iF = traceIdxF, iB = traceIdxB)
+            fixed (float* wxF = traceWxF, wyF = traceWyF, wxB = traceWxB, wyB = traceWyB)
             {
-                int c = y * NX + x;
-                if (Solid[c]) { dst[c] = 0f; continue; }
-                float bx, by;
-                BackTrace(x, y, dt, out bx, out by);
-                dst[c] = Bilinear(src, bx, by, NX, NY);
+                for (int x = 0; x < nx; x++)
+                {
+                    int c = y * nx + x;
+                    if (solid[c]) continue;
+                    float bx, by;
+                    BackTrace(x, y, dt, out bx, out by);
+                    if (bx < 0) bx = 0; if (bx > xMax) bx = xMax;
+                    if (by < 0) by = 0; if (by > yMax) by = yMax;
+                    int x0 = (int)bx, y0 = (int)by;
+                    iF[c] = y0 * nx + x0; wxF[c] = bx - x0; wyF[c] = by - y0;
+                    BackTrace(x, y, -dt, out bx, out by);
+                    if (bx < 0) bx = 0; if (bx > xMax) bx = xMax;
+                    if (by < 0) by = 0; if (by > yMax) by = yMax;
+                    x0 = (int)bx; y0 = (int)by;
+                    iB[c] = y0 * nx + x0; wxB[c] = bx - x0; wyB[c] = by - y0;
+                }
             }
         }
 
-        void SmokeCorrect(int y, float[] phi, float[] hat, float[] bar, float[] dst, float dt, int streaks)
+        /// <summary>Wie <see cref="Bilinear"/> an den vorbereiteten Stellen (gleiche Formel, gleiche Reihenfolge).</summary>
+        unsafe void SmokeTrace(int y, float[] srcArr, float[] dstArr, int[] idxArr, float[] wxArr, float[] wyArr)
         {
-            float inlet = SmokeInlet(y, NY, streaks);
-            for (int x = 0; x < NX; x++)
+            int nx = NX;
+            fixed (bool* solid = Solid)
+            fixed (float* a = srcArr, dst = dstArr, wxA = wxArr, wyA = wyArr)
+            fixed (int* idx = idxArr)
             {
-                int c = y * NX + x;
-                if (Solid[c]) { dst[c] = 0f; continue; }
-                if (x <= 1) { dst[c] = inlet; continue; }
-                float bx, by;
-                BackTrace(x, y, dt, out bx, out by);
-                if (bx < 0) bx = 0; if (bx > NX - 1.001f) bx = NX - 1.001f;
-                if (by < 0) by = 0; if (by > NY - 1.001f) by = NY - 1.001f;
-                int b = (int)by * NX + (int)bx;
-                float lo = Math.Min(Math.Min(phi[b], phi[b + 1]), Math.Min(phi[b + NX], phi[b + NX + 1]));
-                float hi = Math.Max(Math.Max(phi[b], phi[b + 1]), Math.Max(phi[b + NX], phi[b + NX + 1]));
-                float v = hat[c] + 0.5f * (phi[c] - bar[c]);
-                dst[c] = v < lo ? lo : v > hi ? hi : v;
+                int end = y * nx + nx;
+                for (int c = y * nx; c < end; c++)
+                {
+                    if (solid[c]) { dst[c] = 0f; continue; }
+                    int b = idx[c];
+                    float fx = wxA[c], fy = wyA[c];
+                    dst[c] = (a[b] * (1 - fx) + a[b + 1] * fx) * (1 - fy) + (a[b + nx] * (1 - fx) + a[b + nx + 1] * fx) * fy;
+                }
+            }
+        }
+
+        unsafe void SmokeCorrect(int y, float[] phiArr, float[] hatArr, float[] barArr, float[] dstArr, int streaks)
+        {
+            int nx = NX;
+            float inlet = SmokeInlet(y, NY, streaks);
+            fixed (bool* solid = Solid)
+            fixed (float* phi = phiArr, hat = hatArr, bar = barArr, dst = dstArr)
+            fixed (int* idx = traceIdxF)
+            {
+                for (int x = 0; x < nx; x++)
+                {
+                    int c = y * nx + x;
+                    if (solid[c]) { dst[c] = 0f; continue; }
+                    if (x <= 1) { dst[c] = inlet; continue; }
+                    int b = idx[c];
+                    float lo = Math.Min(Math.Min(phi[b], phi[b + 1]), Math.Min(phi[b + nx], phi[b + nx + 1]));
+                    float hi = Math.Max(Math.Max(phi[b], phi[b + 1]), Math.Max(phi[b + nx], phi[b + nx + 1]));
+                    float v = hat[c] + 0.5f * (phi[c] - bar[c]);
+                    dst[c] = v < lo ? lo : v > hi ? hi : v;
+                }
             }
         }
 

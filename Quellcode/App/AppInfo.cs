@@ -4,7 +4,7 @@ namespace Windkanal
     /// Wird auch vom Installer benutzt.</summary>
     static class AppInfo
     {
-        public const string Version = "1.0.1";
+        public const string Version = "1.0.3";
         public const string Name = "Windkanal";
     }
 }

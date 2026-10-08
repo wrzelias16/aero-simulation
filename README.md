@@ -124,12 +124,21 @@ Datei: `Quellcode/App/Solver.cs`. Alles in **Gittereinheiten** (Δx = Δt = 1, D
 - **Kollision:** BGK mit lokaler Relaxationszeit, Nicht-Gleichgewichtsanteil **regularisiert**: nur der physikalische Spannungstensor (pxx, pyy, pxy) wird zurückgeführt.
 - **Turbulenz:** Smagorinsky-LES, Cs = 0,1. Lokale Relaxationszeit `tauE = 0.5·(tau + sqrt(tau² + 18·√2·Cs²·|Π|/ρ))` mit |Π| aus dem Nicht-Gleichgewichts-Spannungstensor.
 - **Viskosität:** ν = U0·L/Re, tau = 3ν + 0,5. U0 wird so gewählt, dass tau höchstens ca. 1,5 bleibt und die Mach-Zahl klein ist.
-- **Parallelisierung (CPU):** `Parallel.For` über die Gitterzeilen, Kernel mit `unsafe`-Zeigern. Rund 55 bis 70 MLUPS (Millionen Zellen-Updates pro Sekunde) auf 12 Kernen, 330 bis 650 MLUPS auf 20 Kernen (Core Ultra 7 265KF).
+- **Parallelisierung (CPU):** `Parallel.For` über die Gitterzeilen, Kernel mit `unsafe`-Zeigern. Freie Strömungszellen (auch in der
+  Beruhigungsstrecke) rechnet `FluidBlock4` mit SIMD (`System.Numerics.Vector4`, vier Zellen auf einmal, in .NET Framework enthalten),
+  Rand- und Körperzellen weiter einzeln. Gleiche Rechenschritte in gleicher Reihenfolge, deshalb **bitgleich** zur Einzelzelle.
+  Seit v1.0.3 etwa doppelt so schnell wie vorher (i7-9750H, 6 Kerne: ca. 150 bis 190 statt 70 bis 90 MLUPS, kühler Laptop).
 - **GPU (`GpuLbm.cs`):** OpenCL über P/Invoke direkt auf `OpenCL.dll`, kein SDK und keine Zusatzpakete. Die Kernel sind eine 1:1-Übersetzung
   von `StepRow`, Einlass/Auslass, `Reset`, `ApplyMask` und `Kick` (gleiche Formeln, gleiche Reihenfolge, `FP_CONTRACT OFF`, korrekt gerundete
-  Division/Wurzel, Kräfte in `double`). Je Schritt laufen zwei Kernel ohne Warten hintereinander; die Kräfte jedes Schritts werden pro Paket
-  (bis 512 Schritte) auf der GPU summiert und zusammen zurückgelesen, Dichte und Geschwindigkeit einmal pro Paket für Anzeige und Rauch.
-  Die App wählt die Paketgröße so, dass ein Bild im Zeitbudget von 22 ms bleibt. `Solver.StepMany` ist die Schnittstelle dafür.
+  Division/Wurzel, Kräfte in `double`). Je Schritt laufen zwei Kernel ohne Warten hintereinander; die Kräfte jedes Schritts werden je Rutsch
+  (bis 512 Schritte) auf der GPU summiert, ein Paket (bis 4096 Schritte) wird zusammen zurückgelesen.
+  Dichte und Geschwindigkeit schreibt der Schritt nur am Ende eines Pakets (und vor dem `Kick`) ganz, sonst nur die Spalten x = 1 und
+  x = NX−2, die Einlass und Auslass brauchen: spart Speicherverkehr, Ergebnisse bitgleich.
+- **Rechnen ohne Warten (App, GPU):** `Solver.BeginSteps` reiht ein Paket ein und kehrt sofort zurück, `EndSteps` holt es im nächsten Takt ab.
+  Dazwischen zeichnet die CPU Bild und Partikel, die GPU rechnet weiter. Die Paketgröße kommt aus den Zeitstempeln der GPU
+  (OpenCL-Profiling), Ziel 22 ms GPU-Zeit je Bild (12 ms während einer Bewegung). Auf der CPU rechnet die App wie bisher im Zeitbudget
+  (`StepMany`), aber in Paketen statt Einzelschritten. `StepMany` bleibt die einfache Schnittstelle für Tests.
+- **Grafikkarten-Wahl:** eigenständige Grafikkarte vor eingebauter (Laptops mit zwei Grafikchips), danach der größte Speicher.
 
 ### Ränder
 | Rand | Behandlung |
@@ -154,7 +163,16 @@ Strouhal-Zahl: ca wird über 0,5 T gleitend geglättet, Nulldurchgänge mit Hyst
 
 ### Darstellung (`Visuals.cs`, Klasse `Renderer`)
 Farbtabellen (LUT) für Geschwindigkeit, Druck, Wirbelstärke. Bilineare Abtastung des Gitters pro Bildschirmpixel, Körper mit weicher Kante.
-Rauchpartikel werden als Punkte gezeichnet. **Alles läuft auf der CPU**, das ist der Hauptgrund für die ca. 27 FPS bei 600×240.
+Rauchpartikel werden als Punkte gezeichnet. **Alles läuft auf der CPU.** Seit v1.0.3: Farbwerte nur für den sichtbaren Teil, Körpermaske
+nur bei Änderung neu, Spaltenlage je Bildspalte einmal gerechnet, Bildpunkte direkt ins Bitmap (ca. 30 % schneller, Bild bitgleich).
+
+**Rauch (Dichtefeld):** Die Strömung steht während der Teilschritte eines Bildes still. Deshalb werden die Rückverfolgungen (+dt und −dt)
+einmal je Bild gerechnet (`SmokePrepare` bzw. Kernel `smoke_prep`, CPU gleich als Gitterzelle und Gewichte) und in allen Teilschritten
+wiederverwendet. CPU etwa doppelt so schnell, Ergebnis bitgleich.
+
+**Prüfen, dass Optimierungen nichts verändern:** `Quellcode\bin\Bench2D.exe pruef beide paket` druckt Fingerabdrücke (Kräfte, Dichte,
+Geschwindigkeit, Rauch, Bilder aller Ansichten) für GPU und CPU. Sie müssen vor und nach einer Leistungsänderung Bit für Bit gleich sein
+(GPU und CPU sind auch untereinander gleich). `Bench2D.exe gpu|cpu` misst, wo die Zeit bleibt (Rechnen, Lesen, Rauch, Partikel, Bild).
 
 ---
 
